@@ -10,7 +10,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
   <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-8b5cf6?style=flat-square">
   <img alt="Built with Rust 1.99" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="Static binary" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
-  <img alt="Linux aarch64" src="https://img.shields.io/badge/Linux-aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
+  <img alt="Linux x86_64 and aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
 </p>
 
 **English** · [简体中文](README.zh-CN.md)
@@ -38,7 +38,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 - **Familiar filters.** Keep using `--me`, `--start`, `-u`, `-j`, `-t`, `-p`, and other `squeue` options.
 - **A menu that fits.** Node and container pickers scroll within the terminal height and react to resizing.
 - **Containers first.** Enter confirms the highlighted container; the host shell remains the last choice.
-- **One executable.** The delivered Linux aarch64 binary is statically linked and runs without activating a venv or installing a Python or Rust runtime.
+- **One executable.** The Linux x86_64 and aarch64 release binaries are statically linked and run without activating a venv or installing a Python or Rust runtime.
 
 ## Quick start
 
@@ -63,7 +63,30 @@ Replace `12345` with your job ID. For a new setup, follow [Installation](#instal
 | Submitted scripts | `scontrol`; `sacct` for historical retrieval; `less` for interactive viewing |
 | Node and container shells | `scontrol`, `srun`; `enroot` on the target node for container entry |
 
-The current build targets **aarch64 Linux**. For `sh`, the executable's path must be accessible on the compute nodes, typically through a shared home directory; login and compute nodes must use a compatible architecture.
+Release builds support **x86_64 and aarch64 Linux**, using static musl binaries. For `sh`, the executable's path must be accessible on the compute nodes, typically through a shared home directory; login and compute nodes must use a compatible architecture.
+
+### Download a release
+
+Download the archive matching your Linux architecture from [Releases](https://github.com/flymin/sj/releases):
+
+| Architecture (`uname -m`) | Release target |
+| --- | --- |
+| `x86_64` | `x86_64-unknown-linux-musl` |
+| `aarch64` | `aarch64-unknown-linux-musl` |
+
+```bash
+SJ_VERSION=0.1.0
+SJ_TARGET="$(uname -m)-unknown-linux-musl"
+SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
+curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
+curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "$SJ_ARCHIVE" sj
+mkdir -p "$HOME/local/bin"
+install -m 755 sj "$HOME/local/bin/sj"
+```
+
+Release archives contain the executable, both READMEs, and the terminal preview. The binary needs no Rust or Python runtime; the Slurm commands listed above remain runtime requirements.
 
 ### Build and install
 
@@ -194,6 +217,21 @@ The build uses **Rust 1.99.0**, edition 2024, the `aarch64-unknown-linux-musl` t
 ```
 
 Tests cover queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, and CLI help. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
+
+### GitHub Actions
+
+[CI and release](https://github.com/flymin/sj/actions/workflows/ci.yml) runs on pull requests, pushes to `main`, and version tags. Each architecture uses a native GitHub-hosted runner and Rust 1.99.0 to run formatting, Python build/release tests, Rust tests, Clippy, a static release build, and binary smoke checks. Successful runs upload archives and per-archive checksums as Actions artifacts for 14 days.
+
+To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, and both README version badges, then commit and push. Create a tag matching the package version:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.2.0-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
+
+Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required. Build jobs have read access, while only the release job gets `contents: write`. Local toolchain setup remains available through `build.sh`; Actions uses its own pinned toolchain and `scripts/ci-build.sh`.
 
 <details>
 <summary><strong>Advanced behavior &amp; portability</strong></summary>

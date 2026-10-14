@@ -8,7 +8,7 @@ import sys
 def redact(text, environment):
     keys = (
         "SJ_PROJECT", "SJ_VENV", "SJ_TOOLCHAIN", "SJ_PREFIX", "CARGO_HOME",
-        "CARGO_TARGET_DIR", "SJ_INSTALL_DIR", "SJ_DOWNLOAD", "SJ_UV", "HOME",
+        "CARGO_TARGET_DIR", "SJ_INSTALL_DIR", "SJ_DIST_DIR", "SJ_DOWNLOAD", "SJ_UV", "HOME",
     )
     paths = sorted(
         ((environment[key], "${" + key + "}") for key in keys if environment.get(key)),

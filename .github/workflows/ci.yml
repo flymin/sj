@@ -1,0 +1,87 @@
+name: CI and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  SJ_RUST_VERSION: 1.99.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check version and tag
+        run: python3 scripts/release.py metadata
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$SJ_RUST_VERSION" --profile minimal --component rustfmt,clippy --target "$SJ_TARGET"
+          rustup default "$SJ_RUST_VERSION"
+        env:
+          SJ_TARGET: ${{ matrix.target }}
+      - name: Test, build, and package static binary
+        run: bash scripts/ci-build.sh
+        env:
+          SJ_TARGET: ${{ matrix.target }}
+      - name: Upload binary archive and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sj-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sj-*-unknown-linux-musl
+          path: dist
+          merge-multiple: true
+      - name: Verify both architecture archives
+        run: |
+          version=$(python3 scripts/release.py version)
+          cd dist
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            test -f "sj-v${version}-${target}.tar.gz"
+            sha256sum --check "sj-v${version}-${target}.tar.gz.sha256"
+          done
+          cat ./*.sha256 > SHA256SUMS
+      - name: Publish complete release
+        run: bash scripts/publish-release.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,7 +10,7 @@
   <img alt="版本 0.1.0" src="https://img.shields.io/badge/version-0.1.0-8b5cf6?style=flat-square">
   <img alt="使用 Rust 1.99 构建" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="静态二进制" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
-  <img alt="Linux aarch64" src="https://img.shields.io/badge/Linux-aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
+  <img alt="Linux x86_64 和 aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
 </p>
 
 [English](README.md) · **简体中文**
@@ -38,7 +38,7 @@
 - **熟悉的筛选方式。** 继续使用 `--me`、`--start`、`-u`、`-j`、`-t`、`-p` 等 `squeue` 选项。
 - **菜单刚好装得下。** 节点和容器列表按终端高度滚动，随窗口缩放调整。
 - **容器优先。** Enter 确认当前高亮的容器，宿主机 shell 始终排在最后。
-- **一个可执行文件。** 交付的 Linux aarch64 二进制采用静态链接，无需激活 venv，也无需 Python 或 Rust 运行环境。
+- **一个可执行文件。** Linux x86_64 和 aarch64 发布二进制采用静态链接，无需激活 venv，也无需 Python 或 Rust 运行环境。
 
 ## 快速开始
 
@@ -63,7 +63,30 @@ sj sh 12345                    # 选择节点，再选择 shell
 | 提交脚本 | `scontrol`；历史查询需要 `sacct`；交互查看需要 `less` |
 | 节点与容器 shell | `scontrol`、`srun`；进入容器时目标节点还需要 `enroot` |
 
-当前构建目标为 **aarch64 Linux**。使用 `sh` 时，可执行文件的路径必须在计算节点上也能访问，通常放在共享 home 目录中；登录节点与计算节点的架构需要兼容。
+Release 支持 **x86_64 和 aarch64 Linux**，采用 musl 静态二进制。使用 `sh` 时，可执行文件的路径必须在计算节点上也能访问，通常放在共享 home 目录中；登录节点与计算节点的架构需要兼容。
+
+### 下载 Release
+
+从 [Releases](https://github.com/flymin/sj/releases) 下载与 Linux 架构匹配的压缩包：
+
+| 架构（`uname -m`） | Release 目标 |
+| --- | --- |
+| `x86_64` | `x86_64-unknown-linux-musl` |
+| `aarch64` | `aarch64-unknown-linux-musl` |
+
+```bash
+SJ_VERSION=0.1.0
+SJ_TARGET="$(uname -m)-unknown-linux-musl"
+SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
+curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
+curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "$SJ_ARCHIVE" sj
+mkdir -p "$HOME/local/bin"
+install -m 755 sj "$HOME/local/bin/sj"
+```
+
+压缩包包含可执行文件、双语 README 和终端预览。二进制不需要 Rust 或 Python 运行环境；上表列出的 Slurm 命令仍需在运行时可用。
 
 ### 构建与安装
 
@@ -194,6 +217,21 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 ```
 
 测试覆盖队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现和 CLI 帮助。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
+
+### GitHub Actions
+
+[CI and release](https://github.com/flymin/sj/actions/workflows/ci.yml) 在 PR、`main` 推送和版本 tag 时运行。两个架构分别使用 GitHub 原生 runner 和 Rust 1.99.0，检查格式、Python 构建与发布测试、Rust 测试、Clippy、静态 release 构建及二进制基本功能。成功后将压缩包和逐包校验文件上传为 Actions artifacts，保留 14 天。
+
+发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本和双语 README 的版本徽章，然后提交并推送。创建与包版本一致的 tag：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.2.0-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
+
+发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需个人 token。构建任务只有读取权限，只有发布任务获得 `contents: write`。本地仍可通过 `build.sh` 配置和构建；Actions 使用自身固定版本的工具链与 `scripts/ci-build.sh`。
 
 <details>
 <summary><strong>进阶行为与可移植性</strong></summary>
