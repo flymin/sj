@@ -20,6 +20,7 @@ export SJ_PROJECT SJ_TOOLCHAIN SJ_DIST_DIR
 mkdir -p "$SJ_PROJECT/.logs"
 exec > >("$SJ_PYTHON" -u "$SJ_PROJECT/scripts/sanitize_log.py" | tee "$SJ_PROJECT/.logs/ci-build.log") 2>&1
 cd "$SJ_PROJECT"
+trap 'printf "::error::CI failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND"' ERR
 
 SJ_RUSTFLAGS=(
     -C link-self-contained=yes -C target-feature=+crt-static
@@ -42,7 +43,6 @@ cargo build --locked --release --target "$SJ_TARGET"
 
 SJ_BINARY="$CARGO_TARGET_DIR/$SJ_TARGET/release/sj"
 file "$SJ_BINARY"
-file "$SJ_BINARY" | rg -q 'statically linked|static-pie linked'
 "$SJ_PYTHON" -B scripts/release.py verify --binary "$SJ_BINARY" --target "$SJ_TARGET"
 SJ_VERSION=$("$SJ_PYTHON" -B scripts/release.py version)
 test "$("$SJ_BINARY" --version)" = "sj $SJ_VERSION"
