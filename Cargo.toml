@@ -1,0 +1,17 @@
+[package]
+name = "sj"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Small Slurm job helpers: queue, output, scripts, and node/container shells"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+unicode-width = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
