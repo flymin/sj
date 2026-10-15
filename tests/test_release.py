@@ -20,12 +20,15 @@ SPEC.loader.exec_module(RELEASE)
 
 
 class ReleaseTests(unittest.TestCase):
-    def publication(self, version, state, tag=None):
+    def publication(self, version, state, tag=None, notes=None):
         with tempfile.TemporaryDirectory(prefix="sj-publish-") as temporary:
             root = Path(temporary)
             (root / "scripts").mkdir()
             (root / "bin").mkdir()
             (root / "Cargo.toml").write_text(f'[package]\nversion = "{version}"\n')
+            if notes is not None:
+                (root / "docs/releases").mkdir(parents=True)
+                (root / f"docs/releases/{version}.md").write_text(notes)
             for name in ("release.py", "publish-release.sh"):
                 shutil.copyfile(PROJECT / "scripts" / name, root / "scripts" / name)
             (root / "bin/python3").symlink_to(sys.executable)
@@ -73,6 +76,15 @@ fi
         result, calls = self.publication("0.1.0", "missing", "v9.9.9")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, [])
+
+    def test_version_specific_release_notes_replace_generated_notes(self):
+        result, calls = self.publication("0.2.0", "missing", notes="# sj 0.2.0\n\nConfigurable views and field filters.\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--notes-file docs/releases/0.2.0.md", calls[0])
+        self.assertNotIn("--generate-notes", calls[0])
+        result, calls = self.publication("0.2.1", "missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--generate-notes", calls[0])
 
     def test_static_elf_checks_reject_wrong_architecture_and_dynamic_linkage(self):
         def elf(machine, segment, dynamic=b""):

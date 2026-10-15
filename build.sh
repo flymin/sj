@@ -15,6 +15,7 @@ mkdir -p "$SJ_PROJECT/.logs"
 exec > >("$SJ_VENV/bin/python" -u "$SJ_PROJECT/scripts/sanitize_log.py" | tee "$SJ_PROJECT/.logs/build.log") 2>&1
 cd "$SJ_PROJECT"
 test -x "$SJ_VENV/bin/cargo"
+source "$SJ_PROJECT/scripts/prepare-host.sh"
 
 # Keep personal source/cache paths out of compiler diagnostics and the binary.
 SJ_RUSTFLAGS=(
@@ -30,7 +31,7 @@ printf -v CARGO_ENCODED_RUSTFLAGS '%s\x1f' "${SJ_RUSTFLAGS[@]}"
 export CARGO_ENCODED_RUSTFLAGS=${CARGO_ENCODED_RUSTFLAGS%$'\x1f'}
 rustc --version
 cargo --version
-bash -n build.sh setup-toolchain.sh
+bash -n build.sh setup-toolchain.sh scripts/*.sh
 "$SJ_VENV/bin/python" -B -m unittest discover -s tests -p 'test_*.py' -v
 cargo fmt --check
 cargo test --locked

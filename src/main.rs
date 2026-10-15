@@ -1,10 +1,16 @@
+mod config;
 mod containers;
+mod fields;
+mod filter;
 mod help;
+mod layout;
+mod legacy_fields;
 mod logs;
 mod queue;
 mod scripts;
 mod shell;
 mod terminal;
+mod theme;
 mod util;
 
 use std::env;
@@ -18,6 +24,27 @@ fn run() -> Result<i32> {
                 .map_err(|_| "arguments must be valid UTF-8".to_owned())
         })
         .collect::<Result<_>>()?;
+    // Permit queue/config options before an explicit command as well as after it.
+    let mut prefix = 0;
+    while let Some(arg) = args.get(prefix) {
+        if arg == "--no-view-filter" {
+            prefix += 1;
+            continue;
+        }
+        let key = arg.split('=').next().unwrap_or(arg);
+        if !matches!(key, "--config" | "--view" | "--color" | "--filter") {
+            break;
+        }
+        prefix += if arg.contains('=') { 1 } else { 2 };
+    }
+    if prefix > 0
+        && args
+            .get(prefix)
+            .is_some_and(|s| matches!(s.as_str(), "q" | "config"))
+    {
+        let command = args.remove(prefix);
+        args.insert(0, command);
+    }
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => help::run(&[]),
         Some("help") => help::run(&args[1..]),
@@ -28,6 +55,10 @@ fn run() -> Result<i32> {
         Some("q") => {
             args.remove(0);
             queue::run(args)
+        }
+        Some("config") => {
+            args.remove(0);
+            config::run(args)
         }
         Some("out") => {
             args.remove(0);

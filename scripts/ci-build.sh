@@ -46,7 +46,7 @@ file "$SJ_BINARY"
 "$SJ_PYTHON" -B scripts/release.py verify --binary "$SJ_BINARY" --target "$SJ_TARGET"
 SJ_VERSION=$("$SJ_PYTHON" -B scripts/release.py version)
 test "$("$SJ_BINARY" --version)" = "sj $SJ_VERSION"
-for SJ_COMMAND in q out script sh; do
+for SJ_COMMAND in q out script sh config; do
     "$SJ_BINARY" "$SJ_COMMAND" --help >/dev/null
 done
 "$SJ_PYTHON" -B scripts/release.py package --binary "$SJ_BINARY" --target "$SJ_TARGET" --destination "$SJ_DIST_DIR"

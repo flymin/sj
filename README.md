@@ -7,7 +7,7 @@
 Read the queue. Open the log. Inspect the script. Step into your job.
 
 <p>
-  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-8b5cf6?style=flat-square">
+  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=flat-square">
   <img alt="Built with Rust 1.99" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="Static binary" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 and aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Keybindings](#keybindings) · [Development](#development)
+[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Custom views](#make-the-queue-yours) · [Filters](#filter-any-field) · [Keybindings](#keybindings) · [Development](#development)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj preview: queue with remaining time, output log, submitted script, and container shell picker" width="1100">
 
@@ -35,6 +35,8 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 | Inspect a running job | `sj sh 12345` | A node picker, then a container or host shell. |
 
 - **Room to breathe.** Wide terminals show `TIME_LEFT`, `TIME`, `PARTITION`, and `NODELIST(REASON)`; narrow terminals compact the view.
+- **Your queue, your view.** Choose columns from every native Slurm field, set responsive TOML rules, and add terminal colors.
+- **Keep what matters.** Match any field with regex or glob, combine conditions, and save defaults in a view.
 - **Familiar filters.** Keep using `--me`, `--start`, `-u`, `-j`, `-t`, `-p`, and other `squeue` options.
 - **A menu that fits.** Node and container pickers scroll within the terminal height and react to resizing.
 - **Containers first.** Enter confirms the highlighted container; the host shell remains the last choice.
@@ -75,7 +77,7 @@ Download the archive matching your Linux architecture from [Releases](https://gi
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.1.0
+SJ_VERSION=0.2.0
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -115,9 +117,10 @@ The build script checks formatting, runs tests and Clippy, builds a release bina
 | `sj out JOBID [OPTIONS]` | Open stdout, stderr, or print the resolved log path. |
 | `sj script JOBID [OPTIONS]` | View Slurm's submitted script copy, or print it with `--raw`. |
 | `sj sh JOBID [NODE_INDEX] [OPTIONS]` | Choose a node and open a container or host shell. |
+| `sj config path\|views\|check [--config FILE]` | Locate, list, or validate queue configuration. |
 | `sj help [COMMAND]` | Show general or command-specific help. |
 
-Every level accepts **`-h` and `--help`**. `sj -h` introduces the commands; `sj q -h`, `sj out -h`, `sj script -h`, and `sj sh -h` each show usage, options, and examples. Help works without contacting Slurm.
+Every level accepts **`-h` and `--help`**. `sj -h` introduces the commands; `sj q -h`, `sj out -h`, `sj script -h`, `sj sh -h`, and `sj config -h` each show usage, options, and examples. Help works without contacting Slurm.
 
 ### Queue · `q`
 
@@ -135,7 +138,148 @@ If more compression is needed, time, `USER`, and `JOBID` can shrink to **5**, **
 
 `--start` shows pending jobs in expected-start order, following native Slurm behavior, and keeps `START_TIME` as the main time column; wide screens also include `TIME_LEFT`. `-i 5` refreshes every five seconds, recalculating the width and fetching the latest remaining time. Without `--me`, user visibility follows `squeue` defaults.
 
-Use **`--noheader`** to hide column headers. In `sj`, `-h` always means help. Custom formats (`-o`, `-O`), `--long`, steps, and JSON/YAML use native `squeue` output.
+In an interactive terminal, `-i` adds a watch-style status row above the queue:
+
+```text
+Every 5s                           Updated: 2030-01-02 03:04:05 +0000
+```
+
+The timestamp records the latest successful update in local time, with its UTC offset. Narrow terminals shorten the timestamp to the clock time or split the status across two lines. `--noheader` hides only the table's column headers; refresh metadata remains visible. Redirected snapshots and native formats such as JSON keep their original output without this status row.
+
+Use **`--noheader`** to hide column headers. In `sj`, `-h` always means help. Explicit formats (`-o`, `-O`), `--long`, and JSON/YAML use native `squeue` output. Steps use the configured adaptive step view unless an explicit native output option is supplied.
+
+### Filter any field
+
+Use **`--filter EXPR`** to keep matching jobs or steps. Combine conditions with `and`, `or`, `not`, and parentheses; exclude a group by negating it. Filters can reference any full field in the selected Slurm catalog, including fields hidden by your view.
+
+```bash
+sj --me --filter 'Name =~ "^train" and State == "RUNNING"'
+sj q --filter '(Name glob "train-*" or Partition glob "debug-*") and not (Name glob "*test*")'
+sj q --steps --filter 'StepName glob "worker-*"'
+sj q --filter 'Account == "research"' --filter 'Name !~ "test|debug"'
+sj q --no-view-filter --filter 'Name glob "eval-*"'
+```
+
+| Operator | Meaning |
+| --- | --- |
+| `==`, `!=` | Exact string equality / inequality. |
+| `=~`, `!~` | Regex search / negated regex search. Use `^` and `$` for a complete match; `(?i)` enables case-insensitive regex matching. |
+| `glob` | Whole-value Unix shell pattern: `*`, `?`, `[abc]`, `[!abc]`; wildcards also match `/` and leading dots. Literal wildcard characters use brackets, such as `[*]`. |
+| `not` / `!` | Negate a condition or group. |
+| `and` / `&&` | Both conditions must hold. |
+| `or` / `||` | Either condition may hold. |
+| `(...)` | Override the default grouping. |
+
+Comparison binds first, then **NOT → AND → OR**; AND and OR short-circuit. Logical words and field names are case-insensitive; values are case-sensitive by default. Comparisons use strings, including numeric-looking fields. Every referenced field and pattern is validated before querying jobs, even inside a branch that would short-circuit.
+
+Values must be quoted. **Single quotes** inside the expression preserve text literally, useful for regex backslashes. **Double quotes** inside the expression use JSON escapes. Shell quoting is a separate outer layer:
+
+```bash
+sj q --filter "Name =~ '^train-\d+$'"       # Literal regex string inside the expression
+sj q --filter 'Name =~ "^train-\\d+$"'     # JSON-escaped regex string inside the expression
+```
+
+sj does not expand variables itself. Use your shell's quoting rules when expanding `${USER}` or other environment variables. Regex syntax follows the Rust [regex crate](https://docs.rs/regex/latest/regex/#syntax), and glob syntax follows the [glob crate](https://docs.rs/glob/latest/glob/struct.Pattern.html)'s Unix shell patterns; neither evaluates shell commands or searches the filesystem.
+
+Save a default expression in a named view:
+
+```toml
+[views.queue]
+filter = 'not (Name glob "*test*")'
+```
+
+The effective condition is **view filter AND every command-line filter**. Repeating `--filter` adds an AND condition; write OR inside an expression. `--no-view-filter` ignores only the selected view's default filter, leaving command-line and native Slurm filters active. Width rules affect layout only and cannot define filters.
+
+Native `squeue` filters run first. sj then tests the original native field strings, before display cleanup, reason abbreviations, time compaction, truncation, or colors. For example, `Reason == "None"` tests the native string even if its displayed cell is blank. Only retained records determine column widths. No matches produce the normal headers, or empty output with `--noheader`.
+
+Expressions and patterns are compiled at startup and reused for each `-i` refresh. Updated records are filtered again; resizing changes the layout without changing the conditions. Edit a view filter and restart sj to reload it. `sj config check` validates all configured filter expressions, patterns, and referenced fields without querying jobs.
+
+`--filter` and `--no-view-filter` require adaptive output and cannot be combined with `--list-fields`, JSON/YAML, `-o`, `-O`, or other native output options. Native output continues to bypass configuration. Errors identify the expression position; configuration errors also identify the file and view.
+
+### Make the queue yours
+
+Named views, reusable columns, responsive rules, and a small terminal theme live in one **TOML** file. The first adaptive queue run creates a fully commented configuration at `${XDG_CONFIG_HOME}/sj/config.toml`, falling back to `${HOME}/.config/sj/config.toml` when XDG is unset, empty, or relative. Existing files are never overwritten. If this default location cannot be created, sj warns and uses built-ins; an existing invalid file or an explicitly requested missing/invalid file is an error.
+
+```bash
+sj config path                               # Find your configuration
+sj config views                              # List named views
+sj config check                              # Validate TOML and local Slurm fields
+sj q --list-fields                           # All job fields on this Slurm version
+sj q --steps --list-fields                    # Step fields have their own catalog
+sj q --config ./sj.toml --view monitor --me -i5
+sj --view compact --me                       # The queue shortcut accepts these options
+sj q --steps                                 # Adaptive layout for job steps, too
+```
+
+Help, version, field listing, native output, and `sj config` commands do not create a file. `config check` reads the local job/step field catalogs without querying jobs. `--config` also works before an explicit `q` or `config` command.
+
+Built-in views are **`queue`**, **`start`**, **`steps`**, and **`compact`**. Root `default_view`, `start_view`, and `steps_view` select their defaults. `--view` wins over those settings; otherwise `--steps` takes precedence over `--start`. Every full named field reported by the selected Slurm catalog can be a column, including fields such as `Account`, `QOS`, `NumCPUs`, and `WorkDir`. Names are case-insensitive; abbreviated field names are rejected.
+
+Slurm versions without `--helpFormat` use a built-in compatibility catalog containing named fields shared by upstream 22.05 and 23.11. `--list-fields` labels this fallback on stderr; version-specific fields outside that catalog remain accessible through explicit native output. Other command failures still produce errors. `config check` verifies that `default_view` and `start_view` work with job fields, and `steps_view` works with step fields.
+
+A custom configuration can be a small patch over the built-ins. Maps merge by property; arrays replace. To change a built-in view's order without retaining its responsive rules, set `rules = []`. Here is a complete custom view:
+
+```toml
+schema_version = 1
+default_view = "monitor"
+
+[columns.Name]
+max_width = 60
+
+[views.monitor]
+order = ["JobId", "Name", "StateCompact", "TimeLeft"]
+
+[views.monitor.columns.Name]
+preferred_width = 32
+align = "left"
+
+[[views.monitor.rules]]
+min_width = 120
+order = [
+  "JobId", "Partition", "Name", "UserName",
+  "StateCompact", "TimeLeft", "TimeUsed", "ReasonList"
+]
+
+[views.monitor.rules.columns.UserName]
+max_width = 12
+
+[views.monitor.rules.theme.header]
+fg = "#8be9fd"
+
+[theme]
+header = { fg = "cyan", bold = true }
+status = { fg = "bright_black" }
+state_scope = "state"
+
+[theme.states]
+RUNNING = { fg = "green" }
+PENDING = { fg = "yellow" }
+```
+
+Column definitions live under `[columns.<Field>]`, with view overrides under `[views.<Name>.columns.<Field>]` and rule overrides under `[views.<Name>.rules.columns.<Field>]`.
+
+| Property | Meaning / default for a new column |
+| --- | --- |
+| `title` | Header text; defaults to the field name. |
+| `format` | `auto`, `raw`, `duration`, `timestamp`, or `reason`; `auto` recognizes common Slurm time/reason fields. Durations accept Slurm clock formats and integer seconds (including `PendingTime`). |
+| `align` | `left` (default) or `right`. |
+| `min_width` | Compression floor in display cells; default `1`. Short content stays short. |
+| `preferred_width` | Initial allocation, bounded by the natural width and floor; omitted means natural width. |
+| `max_width` | Maximum display cells; omitted means no cap. |
+| `overflow` | `ellipsis` (default) or `truncate`. |
+| `optional` | Whether the solver can hide the column; default `false`. |
+| `shrink_priority` | Ascending priority for shrinking toward the floor; default `20`. |
+| `hide_priority` | Ascending priority for hiding an optional column; default `70`. |
+| `grow_priority` | Ascending priority for receiving spare space; default `10`. |
+| `style` | Column cell style: `fg`, `bg`, `bold`, `dim`, `italic`, `underline`. |
+
+Natural width is the widest header or formatted value, capped by `max_width`. Shrink and hide actions share one priority scale: lower numbers run first, ties shrink before hiding, then follow column order. Only the needed amount is shrunk. Remaining space grows visible columns toward natural width. If mandatory columns still cannot fit, each job becomes a wrapped stack of `title: value` lines with complete mandatory values. `--noheader` omits those labels.
+
+Rules have inclusive `min_width` / `max_width` bounds; either can be omitted. All matching rules apply in file order, with later properties winning. Each rule can change `order`, column properties, and theme properties. Configuration is read **once at startup**; `-i` re-evaluates rules from the base configuration after each query, including terminal resizes. Edit the file and restart sj to reload it.
+
+Themes style `header`, `row`, and watch `status`. Colors accept the 16 names (`black` through `white`, plus `bright_*`), an index `0..255`, `"#RRGGBB"`, or `"reset"`. Styles inherit property by property: `false` clears an inherited attribute; `fg` / `bg = "reset"` clears a color. Theme overrides follow global → view → matching rules. `theme.states` uses full state names; `state_scope = "state"` colors state cells and `"row"` colors the whole row. Cell style precedence is row → row state → column → cell state, with only the chosen state scope applied.
+
+`--color auto` uses colors on terminals, honors `NO_COLOR`, and disables styling for `TERM=dumb`. `--color always` also colors redirected output; `--color never` disables styling. Padding, truncation, and wrapping use Unicode display widths before ANSI styling, with resets at each cell or line. Native output stays untouched and cannot be combined with `--view`.
 
 ### Logs · `out`
 
@@ -216,7 +360,7 @@ The build uses **Rust 1.99.0**, edition 2024, the `aarch64-unknown-linux-musl` t
 ./build.sh
 ```
 
-Tests cover queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, and CLI help. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
+Tests cover configuration generation and concurrent creation, patch/rule validation, field catalogs, job/step views, boolean filters and raw values, view filter composition, themes, queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, and CLI help. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
 
 ### GitHub Actions
 
@@ -225,8 +369,8 @@ Tests cover queue layout, compact durations, remaining-time refreshes, Unicode, 
 To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, and both README version badges, then commit and push. Create a tag matching the package version:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.2.0-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
@@ -238,8 +382,8 @@ Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required
 
 ### Queue rendering
 
-- Width comes from the terminal, then `COLUMNS`, then a 120-column fallback. Extremely narrow views reduce auxiliary columns or use multiple lines. Job IDs can be abbreviated in the table; the extreme multi-line fallback retains the full ID on its own line.
-- Iteration accepts `-i 5`, `-i5`, and `--iterate=5`. TTY output redraws; redirected output appends snapshots.
+- Width comes from the terminal, then `COLUMNS`, then a 120-column fallback. Extremely narrow views reduce auxiliary columns or use multiple lines. Job IDs can be abbreviated in the table; the stacked fallback wraps complete mandatory field values.
+- Iteration accepts `-i 5`, `-i5`, and `--iterate=5`. TTY output redraws with the refresh interval and successful update time; redirected output appends snapshots without metadata.
 - Narrow start-time columns use month/day and hour/minute; wide columns show the full timestamp.
 - For multi-cluster output with native cluster headings, use an explicit native format or JSON/YAML.
 

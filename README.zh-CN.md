@@ -7,7 +7,7 @@
 查看队列。打开日志。检查脚本。进入作业。
 
 <p>
-  <img alt="版本 0.1.0" src="https://img.shields.io/badge/version-0.1.0-8b5cf6?style=flat-square">
+  <img alt="版本 0.2.0" src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=flat-square">
   <img alt="使用 Rust 1.99 构建" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="静态二进制" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 和 aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@
 
 [English](README.md) · **简体中文**
 
-[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [快捷键](#快捷键) · [开发](#开发)
+[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [自定义视图](#打造自己的队列视图) · [字段过滤](#按任意字段过滤) · [快捷键](#快捷键) · [开发](#开发)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj 预览：包含剩余时间的队列、作业日志、提交脚本和容器 shell 菜单" width="1100">
 
@@ -35,6 +35,8 @@
 | 检查运行中的作业 | `sj sh 12345` | 先选节点，再进入容器或宿主机 shell。 |
 
 - **宽窄都清楚。** 宽屏显示 `TIME_LEFT`、`TIME`、`PARTITION` 和 `NODELIST(REASON)`，窄屏自动压缩布局。
+- **自己的队列视图。** 从所有原生 Slurm 字段中选择列，配置响应式 TOML 规则与终端配色。
+- **只留关心的作业。** 任意字段支持正则与 glob、逻辑条件组合，也能把默认过滤保存在视图中。
 - **熟悉的筛选方式。** 继续使用 `--me`、`--start`、`-u`、`-j`、`-t`、`-p` 等 `squeue` 选项。
 - **菜单刚好装得下。** 节点和容器列表按终端高度滚动，随窗口缩放调整。
 - **容器优先。** Enter 确认当前高亮的容器，宿主机 shell 始终排在最后。
@@ -75,7 +77,7 @@ Release 支持 **x86_64 和 aarch64 Linux**，采用 musl 静态二进制。使�
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.1.0
+SJ_VERSION=0.2.0
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -115,9 +117,10 @@ sj -h
 | `sj out JOBID [OPTIONS]` | 打开 stdout、stderr，或仅输出解析后的日志路径。 |
 | `sj script JOBID [OPTIONS]` | 查看 Slurm 保存的提交脚本，或用 `--raw` 输出原文。 |
 | `sj sh JOBID [NODE_INDEX] [OPTIONS]` | 选择节点，进入容器或宿主机 shell。 |
+| `sj config path\|views\|check [--config FILE]` | 定位、列出或校验队列配置。 |
 | `sj help [COMMAND]` | 查看总览或某个子命令的帮助。 |
 
-所有层级都支持 **`-h` 和 `--help`**。`sj -h` 介绍各子命令；`sj q -h`、`sj out -h`、`sj script -h`、`sj sh -h` 分别展示本命令的用法、选项和示例。查看帮助不需要连接 Slurm。
+所有层级都支持 **`-h` 和 `--help`**。`sj -h` 介绍各子命令；`sj q -h`、`sj out -h`、`sj script -h`、`sj sh -h`、`sj config -h` 分别展示本命令的用法、选项和示例。查看帮助不需要连接 Slurm。
 
 ### 队列 · `q`
 
@@ -135,7 +138,148 @@ sj q --me --json
 
 `--start` 按 Slurm 原生语义展示等待中的作业，并按预计开始时间排序，主要时间列保持为 `START_TIME`；宽屏额外显示 `TIME_LEFT`。`-i 5` 每五秒刷新，重新计算列宽并获取最新剩余时间。省略 `--me` 时，用户范围沿用 `squeue` 默认设置。
 
-隐藏表头使用 **`--noheader`**；在 `sj` 中，`-h` 始终表示帮助。自定义格式（`-o`、`-O`）、`--long`、steps 和 JSON/YAML 使用原生 `squeue` 输出。
+在交互终端中，`-i` 会在队列上方添加类似 watch 的状态行：
+
+```text
+Every 5s                           Updated: 2030-01-02 03:04:05 +0000
+```
+
+时间戳记录最近一次成功更新的本地时间，并附带 UTC 偏移。窄屏下只保留时分秒，或将状态分为两行。`--noheader` 仅隐藏表格列标题，刷新信息仍然可见。重定向快照和 JSON 等原生格式保持原有输出，不添加状态行。
+
+隐藏表头使用 **`--noheader`**；在 `sj` 中，`-h` 始终表示帮助。显式格式（`-o`、`-O`）、`--long` 和 JSON/YAML 使用原生 `squeue` 输出。step 默认使用可配置的自适应视图；明确指定原生输出选项时才直通。
+
+### 按任意字段过滤
+
+使用 **`--filter EXPR`** 保留匹配的 job 或 step，通过 `and`、`or`、`not` 和括号组合条件；对一组条件取反即可排除。表达式可以引用所选 Slurm 字段目录中的任意完整字段名，包括当前视图未显示的字段。
+
+```bash
+sj --me --filter 'Name =~ "^train" and State == "RUNNING"'
+sj q --filter '(Name glob "train-*" or Partition glob "debug-*") and not (Name glob "*test*")'
+sj q --steps --filter 'StepName glob "worker-*"'
+sj q --filter 'Account == "research"' --filter 'Name !~ "test|debug"'
+sj q --no-view-filter --filter 'Name glob "eval-*"'
+```
+
+| 运算符 | 含义 |
+| --- | --- |
+| `==`、`!=` | 完整字符串相等 / 不等。 |
+| `=~`、`!~` | 正则搜索 / 正则不匹配。用 `^`、`$` 限定完整匹配，`(?i)` 启用正则大小写忽略。 |
+| `glob` | 整个字段的 Unix shell 通配匹配：`*`、`?`、`[abc]`、`[!abc]`；通配符也能跨 `/` 和匹配开头的点。匹配字面通配字符时使用括号，如 `[*]`。 |
+| `not` / `!` | 对一个条件或条件组取反。 |
+| `and` / `&&` | 两个条件都满足。 |
+| `or` / `||` | 任一条件满足。 |
+| `(...)` | 显式指定条件分组。 |
+
+比较运算优先，然后依次为 **NOT → AND → OR**；AND、OR 短路求值。逻辑关键字与字段名不区分大小写，字段值默认区分大小写。比较按字符串执行，包括看起来像数字的字段。所有引用字段及模式均在查询作业前校验，短路分支中的引用也会检查。
+
+值必须加引号。表达式内部的**单引号**保留原文，适合包含反斜杠的正则；**双引号**使用 JSON 转义。外层 shell 引号是另一个独立层次：
+
+```bash
+sj q --filter "Name =~ '^train-\d+$'"       # 表达式内部使用原样字符串
+sj q --filter 'Name =~ "^train-\\d+$"'     # 表达式内部使用 JSON 转义字符串
+```
+
+sj 自身不展开变量；需要使用 `${USER}` 等环境变量时，按 shell 的引号规则展开。正则采用 Rust [regex crate](https://docs.rs/regex/latest/regex/#syntax) 语法，glob 采用 [glob crate](https://docs.rs/glob/latest/glob/struct.Pattern.html) 的 Unix shell 模式；匹配过程不会执行 shell 命令或搜索文件系统。
+
+可以在命名视图中保存默认条件：
+
+```toml
+[views.queue]
+filter = 'not (Name glob "*test*")'
+```
+
+最终条件为**视图过滤 AND 所有命令行过滤**。重复 `--filter` 表示继续做 AND，OR 写在表达式内部。`--no-view-filter` 只忽略所选视图的默认过滤，命令行条件和 Slurm 原生筛选仍生效。宽度规则只影响布局，不允许定义过滤条件。
+
+先执行原生 `squeue` 筛选，再由 sj 匹配原始字段字符串，之后才进行显示清理、原因简写、时间压缩、截断和着色。例如 `Reason == "None"` 匹配原生字符串，即使该单元格显示为空白。只有保留的记录参与列宽计算。零匹配时正常保留表头，使用 `--noheader` 则输出为空。
+
+表达式与模式在启动时编译，`-i` 刷新复用它们，并对最新记录重新筛选。窗口缩放只改变布局，不改变过滤条件。修改视图过滤后需重启 sj；`sj config check` 会校验所有配置过滤的表达式、模式及引用字段，不查询作业。
+
+`--filter`、`--no-view-filter` 适用于自适应输出，不能与 `--list-fields`、JSON/YAML、`-o`、`-O` 等原生输出选项组合。原生输出继续跳过配置读取。错误会标明表达式位置；配置错误同时标明文件及视图。
+
+### 打造自己的队列视图
+
+命名视图、可复用列定义、响应式规则和终端主题，都放在一份 **TOML** 配置中。首次运行自适应队列时，自动在 `${XDG_CONFIG_HOME}/sj/config.toml` 生成带完整注释的默认配置；XDG 未设置、为空或为相对路径时，使用 `${HOME}/.config/sj/config.toml`。已有文件不会被覆盖。默认位置无法创建时会警告并使用内置配置；已有配置损坏，或明确指定的文件缺失、无效时，则直接报错。
+
+```bash
+sj config path                               # 定位配置文件
+sj config views                              # 列出命名视图
+sj config check                              # 校验 TOML 和本机 Slurm 字段
+sj q --list-fields                           # 本机 Slurm 支持的所有 job 字段
+sj q --steps --list-fields                    # step 使用独立的字段目录
+sj q --config ./sj.toml --view monitor --me -i5
+sj --view compact --me                       # 默认队列快捷方式同样支持这些选项
+sj q --steps                                 # step 也使用自适应布局
+```
+
+帮助、版本、字段列表、原生输出以及 `sj config` 都不会创建配置文件。`config check` 只读取本机 job/step 字段目录，不查询作业。`--config` 也可以放在显式 `q` 或 `config` 命令前。
+
+内置视图包括 **`queue`**、**`start`**、**`steps`** 和 **`compact`**。顶层的 `default_view`、`start_view`、`steps_view` 指定默认选择；`--view` 优先级最高，否则 `--steps` 优先于 `--start`。所选 Slurm 字段目录中的任意完整字段名都能用作列，例如 `Account`、`QOS`、`NumCPUs`、`WorkDir`。字段名不区分大小写，不接受缩写。
+
+不支持 `--helpFormat` 的 Slurm 使用内置兼容字段目录，包含上游 22.05 与 23.11 共同支持的完整命名字段。`--list-fields` 会在 stderr 标明该回退；兼容目录之外的版本特有字段仍可通过显式原生输出访问。其他命令失败仍正常报错。`config check` 会分别检查 `default_view`、`start_view` 是否适用于 job，以及 `steps_view` 是否适用于 step。
+
+自定义文件可以只写需要修改的属性。表按属性合并，数组整体替换。修改内置视图排序时，如果不想保留其宽度规则，请设置 `rules = []`。下面是一份完整的自定义视图示例：
+
+```toml
+schema_version = 1
+default_view = "monitor"
+
+[columns.Name]
+max_width = 60
+
+[views.monitor]
+order = ["JobId", "Name", "StateCompact", "TimeLeft"]
+
+[views.monitor.columns.Name]
+preferred_width = 32
+align = "left"
+
+[[views.monitor.rules]]
+min_width = 120
+order = [
+  "JobId", "Partition", "Name", "UserName",
+  "StateCompact", "TimeLeft", "TimeUsed", "ReasonList"
+]
+
+[views.monitor.rules.columns.UserName]
+max_width = 12
+
+[views.monitor.rules.theme.header]
+fg = "#8be9fd"
+
+[theme]
+header = { fg = "cyan", bold = true }
+status = { fg = "bright_black" }
+state_scope = "state"
+
+[theme.states]
+RUNNING = { fg = "green" }
+PENDING = { fg = "yellow" }
+```
+
+列定义写在 `[columns.<Field>]` 下；视图内覆盖写在 `[views.<Name>.columns.<Field>]` 下；规则内覆盖写在 `[views.<Name>.rules.columns.<Field>]` 下。
+
+| 属性 | 含义 / 新列默认值 |
+| --- | --- |
+| `title` | 表头，默认使用字段名。 |
+| `format` | `auto`、`raw`、`duration`、`timestamp`、`reason`；`auto` 识别常见 Slurm 时间和原因字段。持续时间支持 Slurm 时钟格式和整数秒（包括 `PendingTime`）。 |
+| `align` | `left`（默认）或 `right`。 |
+| `min_width` | 显示宽度压缩下限，默认 `1`；短内容不强制补足。 |
+| `preferred_width` | 初始分配宽度，限制在下限与自然宽度之间；省略时使用自然宽度。 |
+| `max_width` | 最大显示宽度；省略时不设上限。 |
+| `overflow` | `ellipsis`（默认）或 `truncate`。 |
+| `optional` | 空间不足时是否允许隐藏，默认 `false`。 |
+| `shrink_priority` | 压缩至下限的优先级，数值越小越早，默认 `20`。 |
+| `hide_priority` | 隐藏可选列的优先级，数值越小越早，默认 `70`。 |
+| `grow_priority` | 分配剩余空间的优先级，数值越小越早，默认 `10`。 |
+| `style` | 列单元格样式：`fg`、`bg`、`bold`、`dim`、`italic`、`underline`。 |
+
+自然宽度取表头和格式化内容中的最大显示宽度，并受 `max_width` 限制。压缩与隐藏共用一套优先级：数值越小越早执行，同值时先压缩再隐藏，最后按列顺序决定；压缩只削减所缺的宽度。剩余空间按增长优先级补回自然宽度。必选列仍无法放下时，每个 job 改用 `title: value` 堆叠换行，保留完整的必选字段值；`--noheader` 省略标签。
+
+规则的 `min_width`、`max_width` 均包含边界，也可省略任意一项。所有匹配规则按文件顺序覆盖，后面的属性生效；规则可修改 `order`、列属性和主题。配置只在**启动时读取一次**；`-i` 每次查询后从基础配置重新匹配宽度规则，终端缩放也会生效。编辑配置后需要重启 sj 才会重新读取文件。
+
+主题支持 `header`、`row`、刷新 `status` 样式。颜色接受 16 个名称（`black` 至 `white` 及其 `bright_*` 版本）、`0..255` 索引、`"#RRGGBB"` 或 `"reset"`。样式逐属性继承，`false` 清除继承的属性，`fg` / `bg = "reset"` 清除颜色。主题按全局 → 视图 → 匹配规则覆盖。`theme.states` 使用完整状态名；`state_scope = "state"` 只给状态列着色，`"row"` 给整行着色。单元格样式优先级为行 → 整行状态 → 列 → 状态单元格，其中只应用所选状态范围。
+
+`--color auto` 在终端启用颜色，遵守 `NO_COLOR`，且在 `TERM=dumb` 时禁用样式。`--color always` 也为重定向输出着色，`--color never` 禁用样式。补齐、截断和换行先按 Unicode 显示宽度计算，再添加 ANSI 样式；每个单元格或行结束时重置。原生输出保持原样，不能与 `--view` 同时使用。
 
 ### 日志 · `out`
 
@@ -216,7 +360,7 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 ./build.sh
 ```
 
-测试覆盖队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现和 CLI 帮助。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
+测试覆盖配置生成与并发创建、配置覆盖与规则校验、字段目录、job/step 视图、布尔过滤与原始值、视图过滤叠加、主题、队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现和 CLI 帮助。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
 
 ### GitHub Actions
 
@@ -225,8 +369,8 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本和双语 README 的版本徽章，然后提交并推送。创建与包版本一致的 tag：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.2.0-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
@@ -238,8 +382,8 @@ tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程�
 
 ### 队列渲染
 
-- 宽度依次取自终端、`COLUMNS` 和 120 列默认值。极窄时减少辅助列或使用多行。表格中的作业 ID 可以缩写；极窄的多行回退会将完整 ID 单独显示一行。
-- 刷新间隔支持 `-i 5`、`-i5`、`--iterate=5`。TTY 中重绘，重定向时连续追加快照。
+- 宽度依次取自终端、`COLUMNS` 和 120 列默认值。极窄时减少辅助列或使用多行。表格中的作业 ID 可以缩写；极窄屏的堆叠回退会换行保留完整的必选字段值。
+- 刷新间隔支持 `-i 5`、`-i5`、`--iterate=5`。TTY 中重绘并显示刷新间隔及成功更新时间；重定向时连续追加快照，不添加状态信息。
 - 开始时间在窄屏显示月日和时分，宽屏显示完整时间戳。
 - 多集群输出带原生集群标题时，使用明确的原生格式或 JSON/YAML。
 

@@ -1,0 +1,182 @@
+# sj configuration, schema 1. Edit this file to make the queue your own.
+# First adaptive queue run creates this file; existing files are never replaced.
+# Custom files may contain only the properties you wish to change.
+# Maps merge by property; arrays (order and rules) replace the inherited array.
+schema_version = 1
+default_view = "queue"
+start_view = "start"
+steps_view = "steps"
+
+# Keys are exact, full squeue --helpFormat field names (case-insensitive).
+# sj q --list-fields / sj q --steps --list-fields list your Slurm's fields.
+# Widths are terminal display cells. min_width is a compression floor, so short
+# values are not forced to that width. preferred_width starts allocation;
+# max_width caps it. Extra space grows columns toward their natural width.
+# shrink/hide actions share ascending priorities; shrink wins an equal priority.
+# Smaller grow_priority gets spare space first. Only optional columns can hide.
+# Available properties, with defaults for a new field:
+# title = field name; format = "auto"; align = "left"; min_width = 1
+# preferred_width / max_width = unbounded; overflow = "ellipsis"
+# optional = false; shrink_priority = 20; hide_priority = 70; grow_priority = 10
+# format: auto | raw | duration | timestamp | reason
+# overflow: truncate | ellipsis; align: left | right
+# style = { fg = "cyan", bg = "reset", bold = true, dim = false,
+#           italic = false, underline = false }
+
+[columns.JobId]
+title = "JOBID"
+align = "right"
+min_width = 7
+shrink_priority = 50
+
+[columns.Name]
+title = "NAME"
+min_width = 8
+preferred_width = 48
+grow_priority = 0
+shrink_priority = 20
+
+[columns.UserName]
+title = "USER"
+min_width = 5
+overflow = "truncate"
+optional = true
+shrink_priority = 40
+hide_priority = 80
+
+[columns.StateCompact]
+title = "ST"
+max_width = 4
+optional = true
+hide_priority = 110
+
+[columns.TimeUsed]
+title = "TIME"
+format = "duration"
+min_width = 5
+max_width = 19
+optional = true
+shrink_priority = 30
+hide_priority = 100
+
+[columns.TimeLeft]
+title = "TIME_LEFT"
+format = "duration"
+min_width = 5
+max_width = 19
+optional = true
+hide_priority = 0
+
+[columns.StartTime]
+title = "START_TIME"
+format = "timestamp"
+min_width = 11
+max_width = 19
+optional = true
+shrink_priority = 30
+hide_priority = 100
+
+[columns.NumNodes]
+title = "NODES"
+align = "right"
+max_width = 8
+optional = true
+hide_priority = 90
+
+[columns.Partition]
+title = "PARTITION"
+max_width = 20
+optional = true
+hide_priority = 10
+
+[columns.Reason]
+title = "REASON"
+format = "reason"
+min_width = 4
+max_width = 12
+optional = true
+shrink_priority = 60
+hide_priority = 70
+
+[columns.ReasonList]
+title = "NODELIST(REASON)"
+min_width = 15
+preferred_width = 15
+grow_priority = 10
+optional = true
+shrink_priority = 60
+hide_priority = 70
+
+[columns.StepId]
+title = "STEPID"
+align = "right"
+min_width = 7
+shrink_priority = 50
+
+[columns.StepName]
+title = "NAME"
+min_width = 8
+preferred_width = 48
+grow_priority = 0
+
+[columns.StepState]
+title = "STATE"
+optional = true
+hide_priority = 110
+
+[columns.Nodes]
+title = "NODELIST"
+min_width = 8
+preferred_width = 15
+optional = true
+hide_priority = 70
+
+# Rules are inclusive. All matching rules apply in file order; later wins.
+# Each rule can override order, columns.<Field> properties, and theme properties.
+# Rules are recalculated from the base at each refresh, including after resize.
+# A view may also have filter = 'not (Name glob "*test*")'.
+# Filter operators: ==, !=, =~, !~, glob; logic: not, and, or (or !, &&, ||).
+# Parentheses group conditions. Values use literal single quotes or JSON double
+# quotes. Filters see raw native fields, including fields absent from the view.
+# View and CLI --filter expressions combine with AND; --no-view-filter skips
+# the view filter. Filters are read/compiled at startup and never depend on width.
+[views.queue]
+order = ["JobId", "Name", "UserName", "StateCompact", "TimeUsed", "NumNodes", "Reason"]
+# filter = 'not (Name glob "*test*")'
+
+[[views.queue.rules]]
+min_width = 100
+order = ["JobId", "Partition", "Name", "UserName", "StateCompact", "TimeLeft", "TimeUsed", "NumNodes", "ReasonList"]
+
+[views.start]
+order = ["JobId", "Name", "UserName", "StateCompact", "StartTime", "NumNodes", "Reason"]
+
+[[views.start.rules]]
+max_width = 99
+[views.start.rules.columns.StartTime]
+max_width = 11
+
+[[views.start.rules]]
+min_width = 100
+order = ["JobId", "Partition", "Name", "UserName", "StateCompact", "TimeLeft", "StartTime", "NumNodes", "ReasonList"]
+
+[views.compact]
+order = ["JobId", "Name", "StateCompact", "TimeUsed"]
+
+[views.steps]
+order = ["StepId", "StepName", "UserName", "StepState", "TimeUsed", "Nodes"]
+
+# Styles inherit property by property. false clears an inherited attribute;
+# fg/bg = "reset" clears an inherited color. Colors: 16 names (including
+# bright_black etc.), indices 0..255, or "#RRGGBB". NO_COLOR disables auto color.
+# Use --color auto|always|never. A plain style emits no ANSI escapes.
+[theme]
+header = { fg = "cyan", bold = true }
+status = { fg = "bright_black" }
+state_scope = "state" # "state" colors state cells; "row" colors whole rows.
+
+[theme.states]
+RUNNING = { fg = "green" }
+PENDING = { fg = "yellow" }
+FAILED = { fg = "red" }
+COMPLETED = { fg = "bright_black" }

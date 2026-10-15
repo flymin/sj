@@ -15,7 +15,9 @@ if SJ_DRAFT=$(gh release view "$SJ_TAG" --repo "$GITHUB_REPOSITORY" --json isDra
 else
     SJ_FLAGS=()
     if [[ "$SJ_TAG" == *-* ]]; then SJ_FLAGS+=(--prerelease); fi
-    gh release create "$SJ_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes --title "sj $SJ_TAG" "${SJ_FLAGS[@]}"
+    SJ_NOTES="docs/releases/${SJ_TAG#v}.md"
+    if [[ -f "$SJ_NOTES" ]]; then SJ_FLAGS+=(--notes-file "$SJ_NOTES"); else SJ_FLAGS+=(--generate-notes); fi
+    gh release create "$SJ_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "sj $SJ_TAG" "${SJ_FLAGS[@]}"
 fi
 gh release upload "$SJ_TAG" dist/*.tar.gz dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
 SJ_LATEST=true
