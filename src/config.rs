@@ -46,6 +46,7 @@ pub struct Column {
     pub hide_priority: i32,
     pub grow_priority: i32,
     pub style: Style,
+    pub entries: Option<crate::entries::Entries>,
 }
 impl Default for Column {
     fn default() -> Self {
@@ -62,6 +63,7 @@ impl Default for Column {
             hide_priority: 70,
             grow_priority: 10,
             style: Style::default(),
+            entries: None,
         }
     }
 }
@@ -82,6 +84,9 @@ impl Column {
             .is_some_and(|s| s.is_empty() || s.chars().any(char::is_control))
         {
             return Err("title must be nonempty and contain no control characters".into());
+        }
+        if let Some(entries) = &self.entries {
+            entries.validate()?;
         }
         self.style.validate()
     }
@@ -455,15 +460,15 @@ pub fn load(explicit: Option<&Path>, create: bool) -> Result<Loaded> {
 }
 
 pub fn run(args: Vec<String>) -> Result<i32> {
-    if crate::help::show_if_requested(&args, crate::help::CONFIG)? {
-        return Ok(0);
-    }
+    let mut help = false;
     let mut action = None;
     let mut path = None;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
-        if arg == "--config" || arg.starts_with("--config=") {
+        if arg == "-h" || arg == "--help" {
+            help = true;
+        } else if arg == "--config" || arg.starts_with("--config=") {
             let value = if let Some((_, v)) = arg.split_once('=') {
                 v.to_owned()
             } else {
@@ -477,6 +482,10 @@ pub fn run(args: Vec<String>) -> Result<i32> {
             return Err(format!("unknown config argument {arg:?}; use sj config -h"));
         }
         i += 1;
+    }
+    if help {
+        util::print(crate::help::config_topic(action)?)?;
+        return Ok(0);
     }
     match action {
         Some("path") => util::print(&format!(
@@ -577,5 +586,54 @@ mod tests {
         assert!(Config::parse(bad).unwrap_err().contains("width"));
         // A preferred width is a preference, clamped after a narrower cap.
         assert!(Config::parse("[columns.Name]\nmax_width=20").is_ok());
+    }
+    #[test]
+    fn entry_selection_inherits_and_resets_without_changing_defaults() {
+        assert!(
+            Config::builtin()
+                .columns
+                .values()
+                .all(|column| column.entries.is_none())
+        );
+        let c = Config::parse("[columns.Comment.entries]\ninclude=['cpu','mem','gres/*']\nexclude=['gres/*:hidden']\n[views.test]\norder=['Comment']\n[views.test.columns.Comment.entries]\ninclude=['cpu','gres/*']\n[[views.test.rules]]\nmin_width=100\n[views.test.rules.columns.Comment.entries]\ninclude=[]\nexclude=[]").unwrap();
+        let raw = "cpu=8,mem=32G,node=1,gres/gpu=2,gres/gpu:hidden=1";
+        for (width, expected) in [
+            (80, "cpu=8,gres/gpu=2"),
+            (120, raw),
+            (80, "cpu=8,gres/gpu=2"),
+        ] {
+            let view = c.resolve("test", width).unwrap();
+            assert_eq!(
+                view.columns[0].1.entries.as_ref().unwrap().display(raw),
+                expected
+            );
+        }
+    }
+    #[test]
+    fn entry_errors_identify_column_at_every_config_level() {
+        for table in [
+            "columns.Comment.entries",
+            "views.queue.columns.Comment.entries",
+            "views.queue.rules.columns.Comment.entries",
+        ] {
+            let prefix = if table.contains(".rules.") {
+                "[[views.queue.rules]]\nmin_width=500\n"
+            } else {
+                ""
+            };
+            for invalid in [
+                "separator=''",
+                "include=['[']",
+                "exclude=3",
+                "typo=true",
+                "key_separator=','",
+            ] {
+                let error = Config::parse(&format!("{prefix}[{table}]\n{invalid}")).unwrap_err();
+                assert!(
+                    error.contains("comment") || error.contains("Comment"),
+                    "{error}"
+                );
+            }
+        }
     }
 }

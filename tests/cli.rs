@@ -239,74 +239,96 @@ fn help_aliases_are_consistent_and_never_query_slurm() {
             "printf '%s\\n' \"$0\" >> \"$SJ_TEST_CALLS\"; exit 91",
         );
     }
-    for scope in [
-        None,
-        Some("q"),
-        Some("out"),
-        Some("script"),
-        Some("sh"),
-        Some("config"),
+    for (base, limit) in [
+        (vec![], 28),
+        (vec!["q"], 50),
+        (vec!["out"], 28),
+        (vec!["script"], 28),
+        (vec!["sh"], 28),
+        (vec!["config"], 28),
+        (vec!["config", "path"], 18),
+        (vec!["config", "views"], 18),
+        (vec!["config", "check"], 18),
     ] {
-        let base: Vec<_> = scope.into_iter().collect();
         let mut short = base.clone();
         short.push("-h");
         let mut long = base.clone();
         long.push("--help");
         let mut named = vec!["help"];
-        named.extend(base);
+        named.extend(base.clone());
         let short = f.run(&short);
         let long = f.run(&long);
         let named = f.run(&named);
         for output in [&short, &long, &named] {
             success(output);
             assert!(output.stderr.is_empty());
-            for heading in ["Usage:\n", "Options:\n", "Examples:\n"] {
+            for heading in ["Usage:\n", "Options:\n", "Examples:\n", "Docs:"] {
                 assert!(text(output).contains(heading));
             }
         }
         assert_eq!(short.stdout, long.stdout);
         assert_eq!(short.stdout, named.stdout);
         let help = text(&short);
-        match scope {
-            None => {
+        assert!(
+            help.lines().count() <= limit,
+            "{base:?}: {} lines",
+            help.lines().count()
+        );
+        for line in help.lines() {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line) <= 96,
+                "{base:?}: {line}"
+            );
+        }
+        match base.as_slice() {
+            [] => {
                 assert!(help.contains("Commands:\n"));
-                for example in [
-                    "sj q --me",
-                    "sj out 12345",
-                    "sj script 12345",
-                    "sj sh 12345",
-                ] {
-                    assert!(help.contains(example));
+                for command in ["q ", "out JOBID", "script JOBID", "sh JOBID", "config <"] {
+                    assert!(help.contains(command));
                 }
                 assert!(!help.contains("__node"));
+                assert!(!help.contains("--filter"));
             }
-            Some("q") => {
+            ["q"] => {
                 for option in [
                     "--me",
                     "--start",
+                    "--steps",
+                    "--iterate",
+                    "--config",
+                    "--view",
+                    "--color",
                     "--width",
                     "--noheader",
+                    "--list-fields",
+                    "--filter",
+                    "--no-view-filter",
                     "--user",
                     "--states",
                 ] {
+                    assert!(help.contains(option), "{option}");
+                }
+                assert!(help.contains("squeue --help"));
+                assert!(!help.contains("Field expressions:"));
+            }
+            ["out"] => {
+                assert!(help.contains("--err"));
+                assert!(help.contains("--path"));
+            }
+            ["sh"] => {
+                for option in ["--nodes", "--list", "--host", "--container NAME_OR_PID"] {
                     assert!(help.contains(option));
                 }
-                assert!(help.contains("sj q --me --noheader"));
             }
-            Some("out") => {
-                assert!(help.contains("sj out 12345 --err"));
-                assert!(help.contains("sj out 12345 --path"));
-            }
-            Some("sh") => {
-                assert!(help.contains("sj sh 12345 0 --host"));
-                assert!(help.contains("sj sh 12345 0 --list"));
-                assert!(help.contains("--container NAME_OR_PID"));
-            }
-            Some("script") => {
+            ["script"] => {
                 assert!(help.contains("--raw"));
                 assert!(help.contains("sj script 12345 > job.sbatch"));
             }
-            Some("config") => assert!(help.contains("sj config check --config ./sj.toml")),
+            ["config"] => assert!(help.contains("Commands:\n")),
+            ["config", action] => {
+                assert!(help.contains(&format!("Usage:\n  sj config {action} [OPTIONS]")));
+                assert!(!help.contains("Commands:\n"));
+            }
             _ => unreachable!(),
         }
     }
@@ -319,6 +341,10 @@ fn help_aliases_are_consistent_and_never_query_slurm() {
         success(&f.run(&args));
     }
     assert!(!f.root.join("calls").exists());
+    assert!(!f.root.join("config/sj/config.toml").exists());
+    let literal_path = f.run(&["config", "path", "--config", "-h"]);
+    success(&literal_path);
+    assert_eq!(text(&literal_path), "-h\n");
 }
 
 #[test]
@@ -363,6 +389,10 @@ fn unknown_help_targets_fail_without_running_a_command() {
     assert!(!out.status.success());
     assert!(out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("use sj -h"));
+    let out = f.run(&["help", "config", "unknown"]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("use sj config -h"));
 }
 
 #[test]
@@ -1528,4 +1558,168 @@ fn native_alias_prefixes_share_one_semantic_option() {
     let out = f.run(&["q", "--ste", "--filter", "StepName glob '*'"]);
     success(&out);
     assert!(text(&out).contains("STEPID"));
+}
+
+#[test]
+fn column_entries_change_display_and_width_without_changing_job_filters() {
+    let f = Fixture::new();
+    let resources = format!(
+        "cpu=8,mem=32G,node=1,billing={},gres/gpu=2",
+        "9".repeat(120)
+    );
+    f.queue(&[format!(
+        "{}\x1f{resources}",
+        filter_row("42", "train-complete-name", "R", "compute")
+    )]);
+    let config = f.root.join("entries.toml");
+    fs::write(&config, "[views.resources]\norder=['Name','tres-alloc']\nfilter='tres-alloc glob \"*node=1*\"'\n[views.resources.columns.tres-alloc.entries]\ninclude=['cpu','mem','gres/*']\n").unwrap();
+    let out = f.run(&[
+        "q",
+        "--config",
+        config.to_str().unwrap(),
+        "--view",
+        "resources",
+        "--noheader",
+        "--width",
+        "50",
+        "--filter",
+        "tres-alloc glob '*billing=*'",
+    ]);
+    success(&out);
+    let shown = text(&out);
+    assert!(shown.contains("train-complete-name"));
+    assert!(shown.contains("cpu=8,mem=32G,gres/gpu=2"));
+    assert!(!shown.contains("billing"));
+    assert!(!shown.contains("node=1"));
+    assert!(!shown.contains('…'));
+    assert!(
+        shown
+            .lines()
+            .all(|line| unicode_width::UnicodeWidthStr::width(line) <= 50)
+    );
+    // Dropping every display entry must not drop the job itself.
+    fs::write(&config, "[views.resources]\norder=['Name','tres-alloc']\n[views.resources.columns.tres-alloc.entries]\ninclude=['absent']\n").unwrap();
+    let out = f.run(&[
+        "q",
+        "--config",
+        config.to_str().unwrap(),
+        "--view",
+        "resources",
+        "--noheader",
+        "--filter",
+        "tres-alloc glob '*billing=*'",
+    ]);
+    success(&out);
+    assert_eq!(text(&out).trim(), "train-complete-name");
+    // With no patterns configured, the complete field remains visible.
+    fs::write(&config, "[views.resources]\norder=['tres-alloc']\n").unwrap();
+    let out = f.run(&[
+        "q",
+        "--config",
+        config.to_str().unwrap(),
+        "--view",
+        "resources",
+        "--noheader",
+        "--width",
+        "300",
+    ]);
+    success(&out);
+    assert_eq!(text(&out), format!("{resources}\n"));
+}
+
+#[test]
+fn column_entries_work_on_other_fields_with_custom_separators() {
+    let f = Fixture::new();
+    f.queue(&[format!(
+        "{}\x1fcpu=8\x1fteam:research;owner:demo;debug:yes",
+        watch_row()
+    )]);
+    let config = f.root.join("entries.toml");
+    fs::write(&config, "[views.custom]\norder=['Comment']\n[columns.Comment.entries]\nseparator=';'\nkey_separator=':'\ninclude=['team','owner']\n").unwrap();
+    let out = f.run(&[
+        "q",
+        "--config",
+        config.to_str().unwrap(),
+        "--view",
+        "custom",
+        "--noheader",
+        "--filter",
+        "Comment glob '*debug*'",
+    ]);
+    success(&out);
+    assert_eq!(text(&out), "team:research;owner:demo\n");
+    success(&f.run(&["config", "check", "--config", config.to_str().unwrap()]));
+}
+
+#[test]
+fn invalid_column_entries_fail_before_job_queries() {
+    let f = Fixture::new();
+    f.script("squeue", "touch \"$SJ_TEST_CALLS\"; exit 91");
+    let config = f.root.join("entries.toml");
+    for patch in [
+        "include=['[']",
+        "exclude=7",
+        "separator=''",
+        "key_separator=','",
+        "unknown=true",
+    ] {
+        fs::write(
+            &config,
+            format!("[views.queue.columns.Name.entries]\n{patch}"),
+        )
+        .unwrap();
+        for args in [
+            vec!["q", "--config", config.to_str().unwrap()],
+            vec!["config", "check", "--config", config.to_str().unwrap()],
+        ] {
+            let out = f.run(&args);
+            assert!(!out.status.success(), "{patch}");
+            let error = String::from_utf8_lossy(&out.stderr);
+            assert!(error.contains("entries.toml"), "{error}");
+            assert!(error.contains("entries"), "{error}");
+            assert!(error.contains("Name") || error.contains("name"), "{error}");
+            assert!(!f.root.join("calls").exists());
+        }
+    }
+}
+
+#[test]
+fn watch_updates_column_entries_and_reapplies_width_rules() {
+    let f = Fixture::new();
+    let initial = format!(
+        "{}\x1fcpu=8,mem=32G,node=1,billing=8,gres/gpu=2",
+        watch_row()
+    );
+    let updated = format!(
+        "{}\x1fcpu=16,mem=64G,node=1,billing=16,gres/gpu=4",
+        watch_row()
+    );
+    f.script("squeue", &format!("n=0; if [ -f \"$SJ_TEST_CALLS\" ]; then n=$(cat \"$SJ_TEST_CALLS\"); fi; n=$((n+1)); printf '%s' \"$n\" > \"$SJ_TEST_CALLS\"; if [ \"$n\" -eq 1 ]; then printf '%s\\n' {}; else printf '%s\\n' {}; fi", quote(&initial), quote(&updated)));
+    let config = f.root.join("config/sj/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "[views.queue]\norder=['Name','tres-alloc']\nfilter='tres-alloc glob \"*billing=*\"'\n[views.queue.columns.tres-alloc.entries]\ninclude=['cpu']\n[[views.queue.rules]]\nmin_width=100\n[views.queue.rules.columns.tres-alloc.entries]\ninclude=['cpu','mem','gres/*']\n").unwrap();
+    let mut watch = QueueWatch::open(
+        &f,
+        &[
+            "q",
+            "-i1",
+            "--noheader",
+            "--filter",
+            "tres-alloc glob '*node=1*'",
+        ],
+    );
+    watch.until_rows(1);
+    watch.resize(140);
+    watch.until_rows(2);
+    unsafe {
+        libc::kill(watch.child.id() as i32, libc::SIGINT);
+    }
+    assert_eq!(watch.finish(), 130);
+    let output = String::from_utf8_lossy(&watch.output);
+    let frames: Vec<_> = output.split("\x1b[H\x1b[2J").skip(1).collect();
+    assert!(frames[0].contains("cpu=8"));
+    assert!(!frames[0].contains("mem="));
+    assert!(frames[1].contains("cpu=16,mem=64G,gres/gpu=4"));
+    assert!(!output.contains("billing="));
+    assert!(!output.contains("node=1"));
 }

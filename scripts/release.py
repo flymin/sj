@@ -57,7 +57,7 @@ def package(project, binary, target, destination, epoch):
         raise ValueError("unsupported release target")
     destination.mkdir(parents=True, exist_ok=True)
     archive = destination / f"sj-v{version(project)}-{target}.tar.gz"
-    files = {"sj": binary, "README.md": project / "README.md", "README.zh-CN.md": project / "README.zh-CN.md",
+    files = {"sj": binary, "LICENSE": project / "LICENSE", "README.md": project / "README.md", "README.zh-CN.md": project / "README.zh-CN.md",
              "docs/assets/terminal-preview.svg": project / "docs/assets/terminal-preview.svg"}
     with archive.open("wb") as stream:
         with gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:

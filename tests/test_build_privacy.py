@@ -65,6 +65,7 @@ class BuildPrivacyTests(unittest.TestCase):
                     ({}, f"{temporary}/.venvs/dev"),
                     ({"VIRTUAL_ENV": "/example/active-venv"}, "/example/active-venv"),
                     ({"SJ_VENV": "/example/selected-venv", "VIRTUAL_ENV": "/example/active-venv"}, "/example/selected-venv"),
+                    ({"SJ_INSTALL_DIR": "/example/custom bin"}, f"{temporary}/.venvs/dev"),
                 )
                 for overrides, expected in cases:
                     with self.subTest(script=script, overrides=overrides):
@@ -76,7 +77,7 @@ class BuildPrivacyTests(unittest.TestCase):
                         values = completed.stdout.splitlines()
                         self.assertEqual(values[0], expected)
                         if script == "build.sh":
-                            self.assertEqual(values[1], f"{temporary}/local/bin")
+                            self.assertEqual(values[1], overrides.get("SJ_INSTALL_DIR", f"{temporary}/.local/bin"))
                         else:
                             self.assertEqual(values[2], f"{temporary}/.local/bin/uv")
 

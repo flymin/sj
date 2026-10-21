@@ -7,7 +7,7 @@
 Read the queue. Open the log. Inspect the script. Step into your job.
 
 <p>
-  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=flat-square">
+  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-8b5cf6?style=flat-square">
   <img alt="Built with Rust 1.99" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="Static binary" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 and aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Custom views](#make-the-queue-yours) · [Filters](#filter-any-field) · [Keybindings](#keybindings) · [Development](#development)
+[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Custom views](#make-the-queue-yours) · [Filters](#filter-any-field) · [Column entries](#filter-entries-within-a-column) · [Keybindings](#keybindings) · [Development](#development)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj preview: queue with remaining time, output log, submitted script, and container shell picker" width="1100">
 
@@ -77,37 +77,39 @@ Download the archive matching your Linux architecture from [Releases](https://gi
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.2.0
+SJ_VERSION=0.2.1
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
 tar -xzf "$SJ_ARCHIVE" sj
-mkdir -p "$HOME/local/bin"
-install -m 755 sj "$HOME/local/bin/sj"
+mkdir -p "$HOME/.local/bin"
+install -m 755 sj "$HOME/.local/bin/sj"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Release archives contain the executable, both READMEs, and the terminal preview. The binary needs no Rust or Python runtime; the Slurm commands listed above remain runtime requirements.
+Release archives contain the executable, both READMEs, the terminal preview, and the MIT `LICENSE`. The binary needs no Rust or Python runtime; the Slurm commands listed above remain runtime requirements.
 
 ### Build and install
 
-The scripts use an **existing uv venv** for compiler tooling: `SJ_VENV` takes priority, followed by the active `VIRTUAL_ENV`, then `$HOME/.venvs/dev`. The examples assume a checkout at `~/local/src/sj`.
+The scripts use an **existing uv venv** for compiler tooling: `SJ_VENV` takes priority, followed by the active `VIRTUAL_ENV`, then `$HOME/.venvs/dev`. Clone the repository into a directory of your choice.
 
 ```bash
-cd ~/local/src/sj
+git clone https://github.com/flymin/sj.git
+cd sj
 
 # First-time toolchain setup; skip if already configured.
 SJ_VENV="$HOME/.venvs/dev" SJ_UV="$(command -v uv)" ./setup-toolchain.sh
 
 # Check, build, and install the static executable.
-SJ_VENV="$HOME/.venvs/dev" SJ_INSTALL_DIR="$HOME/local/bin" ./build.sh
+SJ_VENV="$HOME/.venvs/dev" ./build.sh
 
-export PATH="$HOME/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 sj -h
 ```
 
-The build script checks formatting, runs tests and Clippy, builds a release binary, verifies static linkage, and installs it as `~/local/bin/sj`. Build output is saved to `.logs/build.log`; temporary build directories are cleaned up on exit. Local account and filesystem identifiers are replaced with environment placeholders in build/setup logs, and compiler paths are remapped inside the binary. Documentation and previews use fictional identifiers.
+The build script checks formatting, runs tests and Clippy, builds a release binary, verifies static linkage, and installs it as `~/.local/bin/sj` by default. Set `SJ_INSTALL_DIR` to choose another installation directory. Build output is saved to `.logs/build.log`; temporary build directories are cleaned up on exit. Local account and filesystem identifiers are replaced with environment placeholders in build/setup logs, and compiler paths are remapped inside the binary. Documentation and previews use fictional identifiers.
 
 ## Commands
 
@@ -120,7 +122,7 @@ The build script checks formatting, runs tests and Clippy, builds a release bina
 | `sj config path\|views\|check [--config FILE]` | Locate, list, or validate queue configuration. |
 | `sj help [COMMAND]` | Show general or command-specific help. |
 
-Every level accepts **`-h` and `--help`**. `sj -h` introduces the commands; `sj q -h`, `sj out -h`, `sj script -h`, `sj sh -h`, and `sj config -h` each show usage, options, and examples. Help works without contacting Slurm.
+Every level accepts **`-h` and `--help`**, with the same concise output as `sj help <COMMAND>`. `sj -h` lists commands; command help groups options and gives a few examples. Configuration actions have their own help, such as `sj config check -h` or `sj help config check`. Help works without contacting Slurm or creating configuration files. Detailed syntax and behavior are documented below; use `squeue --help` for the full native option list.
 
 ### Queue · `q`
 
@@ -271,6 +273,7 @@ Column definitions live under `[columns.<Field>]`, with view overrides under `[v
 | `shrink_priority` | Ascending priority for shrinking toward the floor; default `20`. |
 | `hide_priority` | Ascending priority for hiding an optional column; default `70`. |
 | `grow_priority` | Ascending priority for receiving spare space; default `10`. |
+| `entries` | Optional display-only key selection: `include`, `exclude`, `separator`, `key_separator`; disabled by default. See [column entries](#filter-entries-within-a-column). |
 | `style` | Column cell style: `fg`, `bg`, `bold`, `dim`, `italic`, `underline`. |
 
 Natural width is the widest header or formatted value, capped by `max_width`. Shrink and hide actions share one priority scale: lower numbers run first, ties shrink before hiding, then follow column order. Only the needed amount is shrunk. Remaining space grows visible columns toward natural width. If mandatory columns still cannot fit, each job becomes a wrapped stack of `title: value` lines with complete mandatory values. `--noheader` omits those labels.
@@ -280,6 +283,50 @@ Rules have inclusive `min_width` / `max_width` bounds; either can be omitted. Al
 Themes style `header`, `row`, and watch `status`. Colors accept the 16 names (`black` through `white`, plus `bright_*`), an index `0..255`, `"#RRGGBB"`, or `"reset"`. Styles inherit property by property: `false` clears an inherited attribute; `fg` / `bg = "reset"` clears a color. Theme overrides follow global → view → matching rules. `theme.states` uses full state names; `state_scope = "state"` colors state cells and `"row"` colors the whole row. Cell style precedence is row → row state → column → cell state, with only the chosen state scope applied.
 
 `--color auto` uses colors on terminals, honors `NO_COLOR`, and disables styling for `TERM=dumb`. `--color always` also colors redirected output; `--color never` disables styling. Padding, truncation, and wrapping use Unicode display widths before ANSI styling, with resets at each cell or line. Native output stays untouched and cannot be combined with `--view`.
+
+### Filter entries within a column
+
+Keep the useful parts of a resource or key/value field without changing which jobs match. This feature is **off by default** and works with any configured column. Add the field to your view's `order` if it is not already displayed.
+
+For an existing resource column, keep CPU, memory, and devices:
+
+```toml
+[views.queue.columns.tres-alloc.entries]
+include = ["cpu", "mem", "gres/*"]
+```
+
+```text
+Before: cpu=16,mem=64G,node=1,billing=16,gres/gpu=2
+After:  cpu=16,mem=64G,gres/gpu=2
+```
+
+Or keep all keys except selected entries:
+
+```toml
+[columns.tres-alloc.entries]
+exclude = ["node", "billing"]
+```
+
+Patterns match **whole keys**, case-sensitively, using `*`, `?`, `[abc]`, or `[!abc]`. `gres/*` includes typed keys such as `gres/gpu:demo`. An empty `include` accepts all keys; matching `exclude` always wins. The original order, duplicate entries, and values are preserved. Active selection trims each entry's outer whitespace and rejoins it with `separator`; no retained entries means an empty cell.
+
+`separator` defaults to `","`; `key_separator` defaults to `"="`. Both are literal, nonempty strings without control characters and must differ. The first key separator splits each entry; a bare entry is its own key. For example, a custom `Comment` value `team:research;owner:demo;debug:yes` can use:
+
+```toml
+[columns.Comment.entries]
+separator = ";"
+key_separator = ":"
+include = ["team", "owner"]
+```
+
+Quoted or escaped separators inside entries are not parsed. Configure rules for the field's actual format. These settings inherit through global columns, view columns, and matching width rules; arrays replace. To cancel inherited selection, clear **both** lists:
+
+```toml
+[views.monitor.columns.tres-alloc.entries]
+include = []
+exclude = []
+```
+
+When both lists are empty, the original text passes through unchanged. Selection runs before formatting and width calculation, including stacked output and watch refreshes. CLI and view job filters still test complete raw values: `--filter 'tres-alloc glob "*billing=*"'` can match a job even when its billing entry is hidden. Native output bypasses column settings. `sj config check` validates entry patterns and separators. The generated configuration includes commented examples.
 
 ### Logs · `out`
 
@@ -360,7 +407,7 @@ The build uses **Rust 1.99.0**, edition 2024, the `aarch64-unknown-linux-musl` t
 ./build.sh
 ```
 
-Tests cover configuration generation and concurrent creation, patch/rule validation, field catalogs, job/step views, boolean filters and raw values, view filter composition, themes, queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, and CLI help. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
+Tests cover configuration generation and concurrent creation, patch/rule validation, field catalogs, job/step views, boolean filters and raw values, view filter composition, themes, queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, concise CLI help, and display-only column entry selection. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
 
 ### GitHub Actions
 
@@ -369,11 +416,11 @@ Tests cover configuration generation and concurrent creation, patch/rule validat
 To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, and both README version badges, then commit and push. Create a tag matching the package version:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
-The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.2.0-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
+The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.2.1-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
 
 Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required. Build jobs have read access, while only the release job gets `contents: write`. Local toolchain setup remains available through `build.sh`; Actions uses its own pinned toolchain and `scripts/ci-build.sh`.
 
@@ -406,7 +453,7 @@ Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required
 - Compiler tools live inside the selected venv under `opt/rust-1.99.0`; its `bin` directory provides the Rust command entry points. Cargo's cache lives under `share/cargo`.
 - Setup installs patchelf into that venv and unpacks isolated musl/libgcc runtime libraries there. It does not edit `pyvenv.cfg` or activation scripts, or install system packages.
 - Rust downloads are checked against the release manifest's SHA256 values; runtime library versions and SHA256 values are fixed in the setup script.
-- `SJ_VENV`, `SJ_UV`, and `SJ_INSTALL_DIR` select the existing environment, uv executable, and installation directory. `SJ_UV` defaults to `uv` on `PATH`, then `$HOME/.local/bin/uv`; installation defaults to `$HOME/local/bin`. Setup skips an already working toolchain.
+- `SJ_VENV`, `SJ_UV`, and `SJ_INSTALL_DIR` select the existing environment, uv executable, and installation directory. `SJ_UV` defaults to `uv` on `PATH`, then `$HOME/.local/bin/uv`; installation defaults to `$HOME/.local/bin`. Setup skips an already working toolchain.
 - The delivered executable has no shared-library dependency, but still calls the cluster's Slurm tools, `less`, and `enroot` as appropriate.
 
 </details>
@@ -420,3 +467,7 @@ README presentation inspired by [sqwatch](https://github.com/fedonman/sqwatch).
 [Back to top](#sj) · [简体中文](README.zh-CN.md)
 
 </div>
+
+## License
+
+[MIT](LICENSE) · Copyright (c) 2026 Ruiyuan Gao

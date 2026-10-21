@@ -1,5 +1,6 @@
 mod config;
 mod containers;
+mod entries;
 mod fields;
 mod filter;
 mod help;

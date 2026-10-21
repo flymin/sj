@@ -1,7 +1,7 @@
 # sj configuration, schema 1. Edit this file to make the queue your own.
 # First adaptive queue run creates this file; existing files are never replaced.
 # Custom files may contain only the properties you wish to change.
-# Maps merge by property; arrays (order and rules) replace the inherited array.
+# Maps merge by property; arrays (order, rules, include/exclude) replace.
 schema_version = 1
 default_view = "queue"
 start_view = "start"
@@ -22,6 +22,34 @@ steps_view = "steps"
 # overflow: truncate | ellipsis; align: left | right
 # style = { fg = "cyan", bg = "reset", bold = true, dim = false,
 #           italic = false, underline = false }
+# entries: optional display-only key selection; disabled unless patterns are set.
+# Patterns match whole keys, case-sensitively: *, ?, [abc], [!abc].
+# An empty include allows all keys; exclude wins. Lists replace inherited lists.
+# Both lists empty preserve the original text and cancel inherited selection.
+# Filtering happens before layout; job filters still see the complete raw value.
+# Examples below are commented out: no entry filters are enabled by default.
+#
+# Keep CPU, memory and devices in a resource column already in your view:
+# [views.queue.columns.tres-alloc.entries]
+# include = ["cpu", "mem", "gres/*"]
+# exclude = []
+# separator = ","       # Literal separator between entries
+# key_separator = "="   # First occurrence separates key from value
+#
+# Alternatively, show every resource except these keys:
+# [columns.tres-alloc.entries]
+# exclude = ["node", "billing"]
+#
+# Custom key/value fields work too, e.g. team:research;owner:demo:
+# [columns.Comment.entries]
+# separator = ";"
+# key_separator = ":"
+# include = ["team", "owner"]
+#
+# Clear an inherited selection for a view (or a width rule's columns):
+# [views.monitor.columns.tres-alloc.entries]
+# include = []
+# exclude = []
 
 [columns.JobId]
 title = "JOBID"

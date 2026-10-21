@@ -7,7 +7,7 @@
 查看队列。打开日志。检查脚本。进入作业。
 
 <p>
-  <img alt="版本 0.2.0" src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=flat-square">
+  <img alt="版本 0.2.1" src="https://img.shields.io/badge/version-0.2.1-8b5cf6?style=flat-square">
   <img alt="使用 Rust 1.99 构建" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="静态二进制" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 和 aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@
 
 [English](README.md) · **简体中文**
 
-[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [自定义视图](#打造自己的队列视图) · [字段过滤](#按任意字段过滤) · [快捷键](#快捷键) · [开发](#开发)
+[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [自定义视图](#打造自己的队列视图) · [字段过滤](#按任意字段过滤) · [列内条目](#列内条目筛选) · [快捷键](#快捷键) · [开发](#开发)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj 预览：包含剩余时间的队列、作业日志、提交脚本和容器 shell 菜单" width="1100">
 
@@ -77,37 +77,39 @@ Release 支持 **x86_64 和 aarch64 Linux**，采用 musl 静态二进制。使�
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.2.0
+SJ_VERSION=0.2.1
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
 tar -xzf "$SJ_ARCHIVE" sj
-mkdir -p "$HOME/local/bin"
-install -m 755 sj "$HOME/local/bin/sj"
+mkdir -p "$HOME/.local/bin"
+install -m 755 sj "$HOME/.local/bin/sj"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-压缩包包含可执行文件、双语 README 和终端预览。二进制不需要 Rust 或 Python 运行环境；上表列出的 Slurm 命令仍需在运行时可用。
+压缩包包含可执行文件、双语 README、终端预览和 MIT `LICENSE`。二进制不需要 Rust 或 Python 运行环境；上表列出的 Slurm 命令仍需在运行时可用。
 
 ### 构建与安装
 
-构建脚本使用**已有的 uv venv** 存放编译工具链：优先读取 `SJ_VENV`，其次为当前激活的 `VIRTUAL_ENV`，最后默认为 `$HOME/.venvs/dev`。示例假设源码位于 `~/local/src/sj`。
+构建脚本使用**已有的 uv venv** 存放编译工具链：优先读取 `SJ_VENV`，其次为当前激活的 `VIRTUAL_ENV`，最后默认为 `$HOME/.venvs/dev`。源码可以克隆到任意目录。
 
 ```bash
-cd ~/local/src/sj
+git clone https://github.com/flymin/sj.git
+cd sj
 
 # 首次配置工具链；已经配置时可跳过。
 SJ_VENV="$HOME/.venvs/dev" SJ_UV="$(command -v uv)" ./setup-toolchain.sh
 
 # 检查、构建并安装静态二进制。
-SJ_VENV="$HOME/.venvs/dev" SJ_INSTALL_DIR="$HOME/local/bin" ./build.sh
+SJ_VENV="$HOME/.venvs/dev" ./build.sh
 
-export PATH="$HOME/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 sj -h
 ```
 
-构建脚本检查格式、运行测试和 Clippy、编译 release、确认静态链接，再安装到 `~/local/bin/sj`。构建输出保存在 `.logs/build.log`，临时构建目录在退出时清理。构建和工具链配置日志中的本地用户名、文件系统路径会替换为环境变量占位符；二进制中的编译路径也会映射为匿名路径。文档和预览使用虚构标识。
+构建脚本检查格式、运行测试和 Clippy、编译 release、确认静态链接，默认安装到 `~/.local/bin/sj`，可通过 `SJ_INSTALL_DIR` 指定其他安装目录。构建输出保存在 `.logs/build.log`，临时构建目录在退出时清理。构建和工具链配置日志中的本地用户名、文件系统路径会替换为环境变量占位符；二进制中的编译路径也会映射为匿名路径。文档和预览使用虚构标识。
 
 ## 命令
 
@@ -120,7 +122,7 @@ sj -h
 | `sj config path\|views\|check [--config FILE]` | 定位、列出或校验队列配置。 |
 | `sj help [COMMAND]` | 查看总览或某个子命令的帮助。 |
 
-所有层级都支持 **`-h` 和 `--help`**。`sj -h` 介绍各子命令；`sj q -h`、`sj out -h`、`sj script -h`、`sj sh -h`、`sj config -h` 分别展示本命令的用法、选项和示例。查看帮助不需要连接 Slurm。
+所有层级都支持 **`-h` 和 `--help`**，与 `sj help <COMMAND>` 展示同一份精简帮助。`sj -h` 列出子命令，各命令帮助按用途分组选项并给出少量示例。配置动作提供独立帮助，例如 `sj config check -h` 或 `sj help config check`。查看帮助不连接 Slurm，也不创建配置文件；完整语法和行为见下文，原生参数列表使用 `squeue --help`。
 
 ### 队列 · `q`
 
@@ -271,6 +273,7 @@ PENDING = { fg = "yellow" }
 | `shrink_priority` | 压缩至下限的优先级，数值越小越早，默认 `20`。 |
 | `hide_priority` | 隐藏可选列的优先级，数值越小越早，默认 `70`。 |
 | `grow_priority` | 分配剩余空间的优先级，数值越小越早，默认 `10`。 |
+| `entries` | 可选的展示条目筛选：`include`、`exclude`、`separator`、`key_separator`；默认关闭，详见[列内条目筛选](#列内条目筛选)。 |
 | `style` | 列单元格样式：`fg`、`bg`、`bold`、`dim`、`italic`、`underline`。 |
 
 自然宽度取表头和格式化内容中的最大显示宽度，并受 `max_width` 限制。压缩与隐藏共用一套优先级：数值越小越早执行，同值时先压缩再隐藏，最后按列顺序决定；压缩只削减所缺的宽度。剩余空间按增长优先级补回自然宽度。必选列仍无法放下时，每个 job 改用 `title: value` 堆叠换行，保留完整的必选字段值；`--noheader` 省略标签。
@@ -280,6 +283,50 @@ PENDING = { fg = "yellow" }
 主题支持 `header`、`row`、刷新 `status` 样式。颜色接受 16 个名称（`black` 至 `white` 及其 `bright_*` 版本）、`0..255` 索引、`"#RRGGBB"` 或 `"reset"`。样式逐属性继承，`false` 清除继承的属性，`fg` / `bg = "reset"` 清除颜色。主题按全局 → 视图 → 匹配规则覆盖。`theme.states` 使用完整状态名；`state_scope = "state"` 只给状态列着色，`"row"` 给整行着色。单元格样式优先级为行 → 整行状态 → 列 → 状态单元格，其中只应用所选状态范围。
 
 `--color auto` 在终端启用颜色，遵守 `NO_COLOR`，且在 `TERM=dumb` 时禁用样式。`--color always` 也为重定向输出着色，`--color never` 禁用样式。补齐、截断和换行先按 Unicode 显示宽度计算，再添加 ANSI 样式；每个单元格或行结束时重置。原生输出保持原样，不能与 `--view` 同时使用。
+
+### 列内条目筛选
+
+只展示资源或键值字段中关心的条目，不改变 job 匹配结果。该功能**默认关闭**，可用于任意配置列；字段尚未展示时，需要先将它加入视图的 `order`。
+
+让已有资源列只显示 CPU、内存和设备：
+
+```toml
+[views.queue.columns.tres-alloc.entries]
+include = ["cpu", "mem", "gres/*"]
+```
+
+```text
+筛选前：cpu=16,mem=64G,node=1,billing=16,gres/gpu=2
+筛选后：cpu=16,mem=64G,gres/gpu=2
+```
+
+也可以只排除指定键，保留其他条目：
+
+```toml
+[columns.tres-alloc.entries]
+exclude = ["node", "billing"]
+```
+
+模式区分大小写，匹配**完整键名**，支持 `*`、`?`、`[abc]`、`[!abc]`；`gres/*` 也能匹配 `gres/gpu:demo` 等带子类型的键。空 `include` 允许所有键，`exclude` 优先排除。保留条目原顺序、重复项和值；启用筛选时去掉每个条目两端的空白，用 `separator` 重新连接；没有保留项时单元格为空。
+
+`separator` 默认 `","`，`key_separator` 默认 `"="`。两者都是非空、不含控制字符且互不相同的字面量字符串。按第一个键值分隔符提取键名；没有分隔符的裸条目整体作为键名。例如，自定义 `Comment` 值 `team:research;owner:demo;debug:yes` 可以配置：
+
+```toml
+[columns.Comment.entries]
+separator = ";"
+key_separator = ":"
+include = ["team", "owner"]
+```
+
+不解析条目内部的引号或转义分隔符，请按字段实际格式配置。设置沿全局列、视图列、匹配的宽度规则逐级继承，数组整体替换；取消继承的筛选需要清空**两个**列表：
+
+```toml
+[views.monitor.columns.tres-alloc.entries]
+include = []
+exclude = []
+```
+
+两个列表均为空时原文保持不变。条目筛选发生在格式化和列宽计算之前，堆叠输出及刷新同样生效。CLI 和视图的 job filter 仍读取完整原始字段：即使隐藏 billing，`--filter 'tres-alloc glob "*billing=*"'` 仍可匹配包含它的 job。原生输出绕过列配置。`sj config check` 校验条目模式和分隔符，自动生成的配置文件也提供了注释示例。
 
 ### 日志 · `out`
 
@@ -360,7 +407,7 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 ./build.sh
 ```
 
-测试覆盖配置生成与并发创建、配置覆盖与规则校验、字段目录、job/step 视图、布尔过滤与原始值、视图过滤叠加、主题、队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现和 CLI 帮助。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
+测试覆盖配置生成与并发创建、配置覆盖与规则校验、字段目录、job/step 视图、布尔过滤与原始值、视图过滤叠加、主题、队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现、精简 CLI 帮助和仅影响展示的列内条目筛选。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
 
 ### GitHub Actions
 
@@ -369,11 +416,11 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本和双语 README 的版本徽章，然后提交并推送。创建与包版本一致的 tag：
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
-tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.2.0-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
+tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.2.1-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
 
 发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需个人 token。构建任务只有读取权限，只有发布任务获得 `contents: write`。本地仍可通过 `build.sh` 配置和构建；Actions 使用自身固定版本的工具链与 `scripts/ci-build.sh`。
 
@@ -406,7 +453,7 @@ tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程�
 - 编译工具放在所选 venv 的 `opt/rust-1.99.0` 下，在其 `bin` 中提供 Rust 命令入口。Cargo 缓存位于 `share/cargo`。
 - 配置脚本在 venv 内安装 patchelf，并解包隔离的 musl/libgcc 运行库；不编辑 `pyvenv.cfg` 或激活脚本，也不安装系统包。
 - Rust 下载按发布 manifest 中的 SHA256 校验；运行库版本与 SHA256 固定在配置脚本中。
-- `SJ_VENV`、`SJ_UV`、`SJ_INSTALL_DIR` 分别选择已有环境、uv 可执行文件和安装目录。`SJ_UV` 默认使用 `PATH` 中的 `uv`，其次为 `$HOME/.local/bin/uv`；安装目录默认为 `$HOME/local/bin`。工具链已经可用时跳过配置。
+- `SJ_VENV`、`SJ_UV`、`SJ_INSTALL_DIR` 分别选择已有环境、uv 可执行文件和安装目录。`SJ_UV` 默认使用 `PATH` 中的 `uv`，其次为 `$HOME/.local/bin/uv`；安装目录默认为 `$HOME/.local/bin`。工具链已经可用时跳过配置。
 - 交付的可执行文件不依赖共享库，但仍按功能调用集群的 Slurm 工具、`less` 和 `enroot`。
 
 </details>
@@ -420,3 +467,7 @@ README 的呈现方式参考了 [sqwatch](https://github.com/fedonman/sqwatch)�
 [回到顶部](#sj) · [English](README.md)
 
 </div>
+
+## 许可证
+
+[MIT](LICENSE) · Copyright (c) 2026 Ruiyuan Gao

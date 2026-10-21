@@ -2,7 +2,7 @@
 if { [ "$#" -eq 1 ] && [ "$1" = '--helpFormat' ]; } || { [ "$#" -eq 2 ] && [ "$1" = '--steps' ] && [ "$2" = '--helpFormat' ]; }; then
     case " $* " in
       *' --steps '*) printf '%s\n' 'JobId StepId StepName StepState UserName TimeUsed StartTime Partition Nodes NumCPUs NumTasks TimeLimit WorkDir StdOut';;
-      *) printf '%s\n' 'JobId Name UserName State StateCompact TimeUsed NumNodes Reason StartTime Partition ReasonList TimeLeft Account QOS WorkDir StdOut TimeLimit NumCPUs NumTasks PendingTime';;
+      *) printf '%s\n' 'JobId Name UserName State StateCompact TimeUsed NumNodes Reason StartTime Partition ReasonList TimeLeft Account QOS WorkDir StdOut TimeLimit NumCPUs NumTasks PendingTime tres-alloc Comment';;
     esac
     exit 0
 fi
@@ -31,7 +31,7 @@ case "$sj_format" in
         values["StepState"]="RUNNING"; values["Nodes"]=$10; values["Account"]="research";
         values["QOS"]="normal"; values["WorkDir"]="/work"; values["StdOut"]="/work/job.out";
         values["TimeLimit"]="1:00:00"; values["NumCPUs"]="8"; values["NumTasks"]="2";
-        values["PendingTime"]="123456";
+        values["PendingTime"]="123456"; values["tres-alloc"]=$12; values["Comment"]=$13;
         for(key in values) canonical[tolower(key)]=values[key];
         for(i=1;i<=count;i++) printf "%s%s", canonical[tolower(fields[i])], (i==count ? "\036\n" : "\037");
       }'

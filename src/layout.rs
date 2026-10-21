@@ -84,6 +84,11 @@ fn reason(value: &str) -> &str {
     }
 }
 fn formatted(value: &str, name: &str, column: &Column, width: usize) -> String {
+    let display = column
+        .entries
+        .as_ref()
+        .map(|entries| entries.display(value));
+    let value = display.as_deref().unwrap_or(value);
     let format = match column.format {
         Format::Auto => match name.to_ascii_lowercase().as_str() {
             "timeused" | "timeleft" | "timelimit" | "mintime" | "pendingtime" => Format::Duration,
@@ -335,6 +340,17 @@ pub fn render(data: &[Row], view: &Resolved, width: usize, noheader: bool, color
 mod tests {
     use super::*;
     use crate::config::Config;
+    #[test]
+    fn stacked_entries_keep_selected_values_and_never_restore_hidden_keys() {
+        let c = Config::parse("[views.test]\norder=['Alpha','Beta']\n[views.test.columns.Alpha]\nmin_width=10\n[views.test.columns.Alpha.entries]\ninclude=['cpu']\n[views.test.columns.Beta]\nmin_width=10").unwrap();
+        let row = Row::from([
+            ("alpha".into(), "cpu=123456789,node=1,billing=99".into()),
+            ("beta".into(), "abcdefghijklm".into()),
+        ]);
+        let out = render(&[row], &c.resolve("test", 12).unwrap(), 12, true, false);
+        assert_eq!(out, "cpu=12345678\n9\nabcdefghijkl\nm\n");
+        assert!(!out.contains("billing"));
+    }
     fn sample() -> Row {
         [
             ("jobid", "123456789_123"),

@@ -4,7 +4,7 @@ set -euo pipefail
 SJ_PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SJ_VENV=${SJ_VENV:-${VIRTUAL_ENV:-${HOME}/.venvs/dev}}
 SJ_TOOLCHAIN="$SJ_VENV/opt/rust-1.99.0"
-SJ_INSTALL_DIR=${SJ_INSTALL_DIR:-${HOME}/local/bin}
+SJ_INSTALL_DIR=${SJ_INSTALL_DIR:-${HOME}/.local/bin}
 export PATH="$SJ_VENV/bin:$SJ_TOOLCHAIN/lib/rustlib/aarch64-unknown-linux-musl/bin:$PATH"
 export CARGO_HOME="$SJ_VENV/share/cargo"
 SJ_TARGET_DIR=$(mktemp -d /tmp/sj-build.XXXXXX)

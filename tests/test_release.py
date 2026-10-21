@@ -120,6 +120,7 @@ fi
             (root / "docs/assets").mkdir(parents=True)
             for name in ("README.md", "README.zh-CN.md", "docs/assets/terminal-preview.svg"):
                 (root / name).write_text("example")
+            shutil.copyfile(PROJECT / "LICENSE", root / "LICENSE")
             binary = root / "binary"
             binary.write_bytes(b"example binary")
             for target in RELEASE.TARGETS:
@@ -130,6 +131,8 @@ fi
                 self.assertEqual(first.with_name(first.name + ".sha256").read_text(), f"{digest}  {first.name}\n")
                 with tarfile.open(first) as bundle:
                     self.assertEqual(bundle.extractfile("sj").read(), binary.read_bytes())
+                    self.assertEqual(bundle.extractfile("LICENSE").read(), (PROJECT / "LICENSE").read_bytes())
+                    self.assertIn(b"Copyright (c) 2026 Ruiyuan Gao", bundle.extractfile("LICENSE").read())
                     for member in bundle.getmembers():
                         self.assertEqual((member.uid, member.gid, member.uname, member.gname, member.mtime), (0, 0, "", "", 1))
                         self.assertEqual(member.mode, 0o755 if member.name == "sj" else 0o644)
