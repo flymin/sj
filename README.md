@@ -7,7 +7,7 @@
 Read the queue. Open the log. Inspect the script. Step into your job.
 
 <p>
-  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-8b5cf6?style=flat-square">
+  <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-8b5cf6?style=flat-square">
   <img alt="Built with Rust 1.99" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="Static binary" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 and aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Custom views](#make-the-queue-yours) · [Filters](#filter-any-field) · [Column entries](#filter-entries-within-a-column) · [Keybindings](#keybindings) · [Development](#development)
+[Quick start](#quick-start) · [Installation](#installation) · [Commands](#commands) · [Fullscreen queue](#fullscreen-queue----tui) · [Custom views](#make-the-queue-yours) · [Filters](#filter-any-field) · [Column entries](#filter-entries-within-a-column) · [Keybindings](#keybindings) · [Development](#development)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj preview: queue with remaining time, output log, submitted script, and container shell picker" width="1100">
 
@@ -30,6 +30,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 | Your next task | One command | What you get |
 | --- | --- | --- |
 | Check the queue | `sj --me` | Terminal-aware columns, runtime remaining, and space for meaningful job names. |
+| Browse interactively | `sj --tui --me` | A fullscreen queue with scrolling, live updates, and task details. |
 | Read the output | `sj out 12345` | The sbatch log resolved from Slurm metadata and opened in `less`. |
 | Inspect the submission | `sj script 12345` | The submitted script, opened from the beginning with line numbers. |
 | Inspect a running job | `sj sh 12345` | A node picker, then a container or host shell. |
@@ -46,6 +47,7 @@ Read the queue. Open the log. Inspect the script. Step into your job.
 
 ```bash
 sj --me                       # Your queue, fitted to the terminal
+sj --tui --me                 # Fullscreen queue with task details
 sj --me --start               # Pending jobs and expected start times
 sj out 12345                   # Open the job's output at the end
 sj script 12345                # Read the submitted script from the beginning
@@ -60,7 +62,7 @@ Replace `12345` with your job ID. For a new setup, follow [Installation](#instal
 
 | Feature | Available on `PATH` |
 | --- | --- |
-| Queue | `squeue` |
+| Queue | `squeue`; `scontrol` for fullscreen controller details |
 | Logs | `sacct`, `scontrol`, `less` |
 | Submitted scripts | `scontrol`; `sacct` for historical retrieval; `less` for interactive viewing |
 | Node and container shells | `scontrol`, `srun`; `enroot` on the target node for container entry |
@@ -77,7 +79,7 @@ Download the archive matching your Linux architecture from [Releases](https://gi
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.2.1
+SJ_VERSION=0.3.0
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -149,6 +151,68 @@ Every 5s                           Updated: 2030-01-02 03:04:05 +0000
 The timestamp records the latest successful update in local time, with its UTC offset. Narrow terminals shorten the timestamp to the clock time or split the status across two lines. `--noheader` hides only the table's column headers; refresh metadata remains visible. Redirected snapshots and native formats such as JSON keep their original output without this status row.
 
 Use **`--noheader`** to hide column headers. In `sj`, `-h` always means help. Explicit formats (`-o`, `-O`), `--long`, and JSON/YAML use native `squeue` output. Steps use the configured adaptive step view unless an explicit native output option is supplied.
+
+### Fullscreen queue · `--tui`
+
+Navigate the queue in an alternate screen, with a fixed header, selected task, and a centered detail popup:
+
+```bash
+sj q --tui --me                 # Refresh every 5 seconds
+sj --tui --me -i 2              # Refresh every 2 seconds
+sj q --tui --steps              # Inspect job steps
+sj q --tui --config ./sj.toml --view monitor
+```
+
+```text
+ sj · queue · monitor                      Every 5s · Updated 14:32:08
+ Jobs 42/128 · RUNNING 24 · PENDING 18                       LIVE
+ ───────────────────────────────────────────────────────────────────
+   JOBID  NAME                 USER   ST  TIME_LEFT  …
+ > 12345  train-main           demo    R   04:18:32
+   12346  eval-nightly         demo    PD  02:00:00
+   …
+ Selected 12345 · Row 1/42 · Columns 1–6/12 ↔
+ ↑↓ Move  ←→ Scroll  Enter Details  Space Pause  ? Help  q Quit
+```
+
+The count compares retained rows with rows fetched after native Slurm filters. State counts describe retained rows. Refreshes keep the same task selected using its cluster and complete job/step ID; if it disappears, selection moves to a nearby row. Failed queries keep the last successful snapshot and update time, mark it **STALE**, and allow retries. A slow query does not block keys or resizing; each Slurm command has a 10-second timeout.
+
+**All columns in the selected view remain accessible.** The active width rule determines the leading column order; missing columns from the base and other rules' `order` lists are appended in configuration order, case-insensitively deduplicated. Column definitions absent from every `order` are not added. Width rules still select styles and column settings. TUI skips screen-driven shrinking, optional-column hiding, and stacked output, while keeping each column's alignment, formatting, entry selection, preferred/max widths, and overflow policy. `preferred_width` is the initial allocation: spare screen space grows columns toward their natural widths in `grow_priority` order, capped by `max_width`, as in plain output. Scroll to see remaining columns; use details for complete field values.
+
+Enter opens a centered **Overview / Raw** popup. The overview groups identity, state, timing, resources, nodes, and paths. It shows the existing snapshot immediately, then fetches controller details for that exact task. Raw includes fetched queue fields and the complete controller response, without display-only entry filters. Controller data has its own timestamp and refreshes only on opening or `r`; background queue updates continue. Text details are used when `scontrol` lacks JSON support. An unavailable controller or expired task leaves the snapshot readable. Grouped array rows ask you to use `--array` rather than selecting an arbitrary element.
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Select the previous / next task; scroll inside a popup. |
+| ← / → | Scroll horizontally by 8 cells; scroll long lines in Raw. |
+| Ctrl+← / Ctrl+→ | Scroll horizontally by a page. |
+| PgUp / PgDn | Move by a page of visible rows, or scroll the popup. |
+| Home / End | First / last task, or beginning / end of details. |
+| Enter | Open the selected task's details. |
+| Tab / Shift+Tab | Switch Overview / Raw. |
+| Space | Pause / resume automatic queue queries. |
+| `+` / `-` | Faster / slower, in 1-second steps, minimum 1 second. |
+| `r` | Refresh the queue, or the task when its popup is open. |
+| `?` / F1 | Open shortcut help. |
+| `q` / Esc | Close a popup, or quit from the queue. |
+| Ctrl+C | Quit from any screen and restore the terminal. |
+
+```toml
+[tui]
+refresh_seconds = 5
+
+[theme.tui]
+title = { fg = "cyan", bold = true }
+selected = { fg = "white", bg = "blue", bold = true }
+border = { fg = "bright_black" }
+key = { fg = "cyan", bold = true }
+error = { fg = "red", bold = true }
+muted = { fg = "bright_black" }
+```
+
+CLI `-i` overrides `[tui].refresh_seconds`; runtime adjustments are not saved. TUI styles inherit through the existing global → view → width-rule theme chain. The terminal's background remains the default; state colors reuse your theme. `NO_COLOR` and `--color never` retain the selection marker and readable text without color. Resizing preserves the selected task and horizontal field context; very small terminals ask for more space while still accepting quit keys.
+
+TUI requires terminal stdin and stdout and rejects native output formats, `--list-fields`, `--width`, and `--noheader`. Existing plain queue output and `-i` retain their behavior. Configuration schema remains 1, and existing files are preserved.
 
 ### Filter any field
 
@@ -407,20 +471,20 @@ The build uses **Rust 1.99.0**, edition 2024, the `aarch64-unknown-linux-musl` t
 ./build.sh
 ```
 
-Tests cover configuration generation and concurrent creation, patch/rule validation, field catalogs, job/step views, boolean filters and raw values, view filter composition, themes, queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, concise CLI help, and display-only column entry selection. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, and terminal restoration. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
+Tests cover configuration generation and concurrent creation, patch/rule validation, field catalogs, job/step views, boolean filters and raw values, view filter composition, themes, queue layout, compact durations, remaining-time refreshes, Unicode, native option forwarding, log resolution, array IDs, script retrieval and byte preservation, node ordering, container discovery, concise CLI help, display-only column entry selection, and fullscreen navigation/rendering. PTY tests exercise script paging and early exit, arrow keys, numeric entry, resizing, cancellation, terminal restoration, and fullscreen query cancellation/timeout recovery. Build-script tests check environment selection and log anonymization. Slurm-facing integration tests use temporary command mocks.
 
 ### GitHub Actions
 
 [CI and release](https://github.com/flymin/sj/actions/workflows/ci.yml) runs on pull requests, pushes to `main`, and version tags. Each architecture uses a native GitHub-hosted runner and Rust 1.99.0 to run formatting, Python build/release tests, Rust tests, Clippy, a static release build, and binary smoke checks. Successful runs upload archives and per-archive checksums as Actions artifacts for 14 days.
 
-To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, and both README version badges, then commit and push. Create a tag matching the package version:
+To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, both README version badges and download examples, and add `docs/releases/<VERSION>.md`, then commit and push. Create a tag matching the package version:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.2.1-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
+The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.3.0-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
 
 Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required. Build jobs have read access, while only the release job gets `contents: write`. Local toolchain setup remains available through `build.sh`; Actions uses its own pinned toolchain and `scripts/ci-build.sh`.
 

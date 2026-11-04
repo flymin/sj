@@ -295,6 +295,7 @@ fn help_aliases_are_consistent_and_never_query_slurm() {
                     "--start",
                     "--steps",
                     "--iterate",
+                    "--tui",
                     "--config",
                     "--view",
                     "--color",
@@ -309,6 +310,7 @@ fn help_aliases_are_consistent_and_never_query_slurm() {
                     assert!(help.contains(option), "{option}");
                 }
                 assert!(help.contains("squeue --help"));
+                assert!(help.contains("default: 5s"));
                 assert!(!help.contains("Field expressions:"));
             }
             ["out"] => {
@@ -1722,4 +1724,26 @@ fn watch_updates_column_entries_and_reapplies_width_rules() {
     assert!(frames[1].contains("cpu=16,mem=64G,gres/gpu=4"));
     assert!(!output.contains("billing="));
     assert!(!output.contains("node=1"));
+}
+
+#[test]
+fn tui_requires_a_terminal_and_rejects_conflicts_before_slurm_calls() {
+    let f = Fixture::new();
+    f.script("squeue", "touch \"$SJ_TEST_CALLS\"; exit 91");
+    for args in [
+        vec!["q", "--tui"],
+        vec!["--tui", "q"],
+        vec!["q", "--tui", "--json"],
+        vec!["q", "--tui", "--list-fields"],
+        vec!["q", "--tui", "--width", "80"],
+        vec!["q", "--tui", "--noheader"],
+        vec!["q", "--tui", "-o", "%i"],
+    ] {
+        let out = f.run(&args);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--tui"));
+        assert!(!f.root.join("calls").exists());
+        assert!(!f.root.join("config/sj/config.toml").exists());
+    }
+    success(&f.run(&["q", "--tui", "-h"]));
 }

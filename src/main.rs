@@ -12,6 +12,7 @@ mod scripts;
 mod shell;
 mod terminal;
 mod theme;
+mod tui;
 mod util;
 
 use std::env;
@@ -28,7 +29,7 @@ fn run() -> Result<i32> {
     // Permit queue/config options before an explicit command as well as after it.
     let mut prefix = 0;
     while let Some(arg) = args.get(prefix) {
-        if arg == "--no-view-filter" {
+        if arg == "--no-view-filter" || arg == "--tui" {
             prefix += 1;
             continue;
         }

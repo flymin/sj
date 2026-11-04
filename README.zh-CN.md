@@ -7,7 +7,7 @@
 查看队列。打开日志。检查脚本。进入作业。
 
 <p>
-  <img alt="版本 0.2.1" src="https://img.shields.io/badge/version-0.2.1-8b5cf6?style=flat-square">
+  <img alt="版本 0.3.0" src="https://img.shields.io/badge/version-0.3.0-8b5cf6?style=flat-square">
   <img alt="使用 Rust 1.99 构建" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="静态二进制" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 和 aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -15,7 +15,7 @@
 
 [English](README.md) · **简体中文**
 
-[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [自定义视图](#打造自己的队列视图) · [字段过滤](#按任意字段过滤) · [列内条目](#列内条目筛选) · [快捷键](#快捷键) · [开发](#开发)
+[快速开始](#快速开始) · [安装](#安装) · [命令](#命令) · [全屏队列](#全屏队列----tui) · [自定义视图](#打造自己的队列视图) · [字段过滤](#按任意字段过滤) · [列内条目](#列内条目筛选) · [快捷键](#快捷键) · [开发](#开发)
 
 <img src="docs/assets/terminal-preview.svg" alt="sj 预览：包含剩余时间的队列、作业日志、提交脚本和容器 shell 菜单" width="1100">
 
@@ -30,6 +30,7 @@
 | 接下来要做什么 | 一条命令 | 得到什么 |
 | --- | --- | --- |
 | 查看队列 | `sj --me` | 适应终端宽度的列、剩余运行时间，以及优先留给作业名的空间。 |
+| 交互浏览 | `sj --tui --me` | 支持滚动、实时刷新和任务详情的全屏队列。 |
 | 阅读输出 | `sj out 12345` | 从 Slurm 元数据定位 sbatch 日志，并用 `less` 打开。 |
 | 检查提交内容 | `sj script 12345` | 从头查看提交脚本，并显示行号。 |
 | 检查运行中的作业 | `sj sh 12345` | 先选节点，再进入容器或宿主机 shell。 |
@@ -46,6 +47,7 @@
 
 ```bash
 sj --me                       # 本人的队列，自适应终端宽度
+sj --tui --me                 # 全屏队列，可打开任务详情
 sj --me --start               # 等待中的作业及预计开始时间
 sj out 12345                   # 从作业日志末尾开始查看
 sj script 12345                # 从头查看提交时的脚本副本
@@ -60,7 +62,7 @@ sj sh 12345                    # 选择节点，再选择 shell
 
 | 功能 | `PATH` 中需要有 |
 | --- | --- |
-| 队列 | `squeue` |
+| 队列 | `squeue`；全屏控制器详情使用 `scontrol` |
 | 日志 | `sacct`、`scontrol`、`less` |
 | 提交脚本 | `scontrol`；历史查询需要 `sacct`；交互查看需要 `less` |
 | 节点与容器 shell | `scontrol`、`srun`；进入容器时目标节点还需要 `enroot` |
@@ -77,7 +79,7 @@ Release 支持 **x86_64 和 aarch64 Linux**，采用 musl 静态二进制。使�
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.2.1
+SJ_VERSION=0.3.0
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -149,6 +151,56 @@ Every 5s                           Updated: 2030-01-02 03:04:05 +0000
 时间戳记录最近一次成功更新的本地时间，并附带 UTC 偏移。窄屏下只保留时分秒，或将状态分为两行。`--noheader` 仅隐藏表格列标题，刷新信息仍然可见。重定向快照和 JSON 等原生格式保持原有输出，不添加状态行。
 
 隐藏表头使用 **`--noheader`**；在 `sj` 中，`-h` 始终表示帮助。显式格式（`-o`、`-O`）、`--long` 和 JSON/YAML 使用原生 `squeue` 输出。step 默认使用可配置的自适应视图；明确指定原生输出选项时才直通。
+
+### 全屏队列 · `--tui`
+
+使用 alt screen 浏览队列，固定表头、选中任务高亮，Enter 打开居中详情弹窗：
+
+```bash
+sj q --tui --me                 # 默认每 5 秒刷新
+sj --tui --me -i 2              # 每 2 秒刷新
+sj q --tui --steps              # 浏览 job steps
+sj q --tui --config ./sj.toml --view monitor
+```
+
+顶部显示刷新频率、上次成功更新时间、筛选后的任务数量和状态统计；底部显示选中任务 ID、行列位置和快捷键。任务数量对比的是保留行数与原生 Slurm 过滤后的查询行数；状态统计针对保留行。刷新后按 cluster 和完整 job/step ID 保持选中任务；任务消失时移动到相邻行。查询失败保留最近成功的快照和时间，显示 **STALE** 并允许重试。慢查询不会阻塞按键或窗口缩放，每个 Slurm 命令超时为 10 秒。
+
+**当前 view 配置的全部列均可浏览。** 当前宽度规则决定优先排列，基础和其他规则 `order` 中缺少的列按配置顺序补到末尾，不区分大小写去重；所有 `order` 都未引用的列定义不会自动加入。宽度规则仍决定列属性和主题。TUI 跳过因终端宽度不足而触发的压缩、可选列隐藏和堆叠，保留每列的对齐、格式、条目筛选、preferred/max 宽度和截断方式。`preferred_width` 是起始分配宽度：与普通输出一致，有剩余屏幕空间时按 `grow_priority` 扩展到自然宽度，并遵守 `max_width`。左右滚动查看其余列，详情查看完整字段。
+
+详情弹窗分为 **Overview / Raw**：概览按身份、状态、时间、资源、节点、路径分组，先展示已有队列快照，再查询确切任务的控制器信息。Raw 展示已查询的原始队列字段及完整控制器响应，不应用仅影响展示的条目筛选。控制器详情独立显示更新时间，仅在打开或按 `r` 时查询；后台队列继续刷新。不支持 JSON 的 `scontrol` 回退为文本详情；控制器不可用或任务过期时仍可阅读快照。数组汇总行提示使用 `--array`，不任意取第一个元素。
+
+| 按键 | 操作 |
+| --- | --- |
+| ↑ / ↓ | 上一个／下一个任务；弹窗内滚动。 |
+| ← / → | 横向滚动 8 个显示单元；Raw 中查看长行。 |
+| Ctrl+← / Ctrl+→ | 横向滚动一屏。 |
+| PgUp / PgDn | 按可见行数翻页，或滚动弹窗。 |
+| Home / End | 首个／最后一个任务，或详情起点／终点。 |
+| Enter | 打开选中任务详情。 |
+| Tab / Shift+Tab | 切换 Overview / Raw。 |
+| Space | 暂停／恢复自动队列查询。 |
+| `+` / `-` | 加快／减慢，步长 1 秒，最低 1 秒。 |
+| `r` | 立即刷新队列；详情弹窗中刷新该任务。 |
+| `?` / F1 | 快捷键帮助。 |
+| `q` / Esc | 关闭弹窗；主界面中退出。 |
+| Ctrl+C | 从任何界面退出并恢复终端。 |
+
+```toml
+[tui]
+refresh_seconds = 5
+
+[theme.tui]
+title = { fg = "cyan", bold = true }
+selected = { fg = "white", bg = "blue", bold = true }
+border = { fg = "bright_black" }
+key = { fg = "cyan", bold = true }
+error = { fg = "red", bold = true }
+muted = { fg = "bright_black" }
+```
+
+CLI `-i` 优先于 `[tui].refresh_seconds`，运行中的调整不写回配置。TUI 样式沿用全局 → 视图 → 宽度规则的主题继承；背景使用终端默认色，状态色复用现有主题。`NO_COLOR` 和 `--color never` 下仍保留选中标记和文字状态。窗口缩放保持任务选择和横向字段位置；极小窗口提示调整尺寸，退出按键继续可用。
+
+TUI 要求 stdin/stdout 都是终端，不能与原生输出格式、`--list-fields`、`--width`、`--noheader` 同用。现有普通 queue 和 `-i` 行为不变，配置 schema 保持 1，已有配置文件不会被覆盖。
 
 ### 按任意字段过滤
 
@@ -407,20 +459,20 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 ./build.sh
 ```
 
-测试覆盖配置生成与并发创建、配置覆盖与规则校验、字段目录、job/step 视图、布尔过滤与原始值、视图过滤叠加、主题、队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现、精简 CLI 帮助和仅影响展示的列内条目筛选。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择及终端恢复。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
+测试覆盖配置生成与并发创建、配置覆盖与规则校验、字段目录、job/step 视图、布尔过滤与原始值、视图过滤叠加、主题、队列布局、时间短格式、剩余时间刷新、Unicode、原生参数透传、日志定位、数组 ID、脚本取回与字节保真、节点顺序、容器发现、精简 CLI 帮助、仅影响展示的列内条目筛选和全屏导航渲染。伪终端测试验证脚本分页及提前退出、方向键、数字输入、窗口缩放、取消选择、终端恢复，以及全屏查询取消和超时重试。构建脚本测试验证环境选择与日志匿名化。涉及 Slurm 的集成测试使用临时命令 mock。
 
 ### GitHub Actions
 
 [CI and release](https://github.com/flymin/sj/actions/workflows/ci.yml) 在 PR、`main` 推送和版本 tag 时运行。两个架构分别使用 GitHub 原生 runner 和 Rust 1.99.0，检查格式、Python 构建与发布测试、Rust 测试、Clippy、静态 release 构建及二进制基本功能。成功后将压缩包和逐包校验文件上传为 Actions artifacts，保留 14 天。
 
-发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本和双语 README 的版本徽章，然后提交并推送。创建与包版本一致的 tag：
+发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本、双语 README 的版本徽章和下载示例，并添加 `docs/releases/<VERSION>.md` 发布说明，然后提交并推送。创建与包版本一致的 tag：
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.2.1-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
+tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.3.0-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
 
 发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需个人 token。构建任务只有读取权限，只有发布任务获得 `contents: write`。本地仍可通过 `build.sh` 配置和构建；Actions 使用自身固定版本的工具链与 `scripts/ci-build.sh`。
 

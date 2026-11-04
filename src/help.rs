@@ -7,7 +7,7 @@ Usage:
   sj [QUEUE_OPTIONS]            Run q by default
 
 Commands:
-  q                            Show the adaptive queue
+  q                            Show the adaptive or fullscreen queue
   out JOBID                    Open a job's output log
   script JOBID                 View the submitted sbatch script
   sh JOBID [NODE_INDEX]         Open a node or container shell
@@ -20,6 +20,7 @@ Options:
 
 Examples:
   sj --me -i 5
+  sj --tui --me
   sj out 12345
   sj sh 12345 0
 
@@ -40,13 +41,14 @@ Options:
       --start                  Show pending jobs and expected start times
   -s, --steps[=IDS]             Show job steps
   -i, --iterate SECONDS         Refresh; show interval and last update time
+      --tui                    Fullscreen queue (default: 5s); ? for shortcuts
 
   View and display:
       --config FILE            Read TOML configuration from FILE
       --view NAME              Select a named view
       --color auto|always|never Set colors (default: auto)
-      --width COLUMNS          Override terminal width
-      --noheader               Hide table headers
+      --width COLUMNS          Override terminal width (plain queue only)
+      --noheader               Hide table headers (plain queue only)
       --list-fields            List available native fields
 
   Filter:
@@ -60,11 +62,14 @@ Native squeue options:
 
 Examples:
   sj q --me --start -i 5
+  sj q --tui --me -i 2
   sj q --filter 'Name glob \"train-*\" and State == \"RUNNING\"'
   sj q --config ./sj.toml --view monitor
 
 -h means help; use --noheader for headers. Native output rejects --view and filters.
+TUI requires terminal stdin/stdout and rejects native output and --list-fields.
 Docs: https://github.com/flymin/sj#commands
+TUI: https://github.com/flymin/sj#fullscreen-queue----tui
 Filters: https://github.com/flymin/sj#filter-any-field
 ";
 

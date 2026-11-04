@@ -19,6 +19,7 @@ extern "C" fn on_signal(signal: libc::c_int) {
 
 #[derive(Debug, Default)]
 struct Options {
+    tui: bool,
     native: Vec<String>,
     interval: Option<Duration>,
     width: Option<usize>,
@@ -250,6 +251,8 @@ fn parse(args: &[String]) -> Result<Options> {
                     }
                 }
             }
+        } else if a == "--tui" {
+            o.tui = true;
         } else if a == "--list-fields" {
             o.list_fields = true;
         } else if a == "--no-view-filter" {
@@ -290,6 +293,12 @@ fn parse(args: &[String]) -> Result<Options> {
     if o.bundled_iterate && !o.passthrough {
         return Err("use -i SECONDS or --iterate SECONDS as a separate sj option".into());
     }
+    if o.tui && (o.passthrough || o.list_fields || o.width.is_some() || o.noheader) {
+        return Err(
+            "--tui cannot be combined with native output, --list-fields, --width or --noheader"
+                .into(),
+        );
+    }
     Ok(o)
 }
 pub fn terminal_width() -> usize {
@@ -316,8 +325,11 @@ fn adaptive_args(options: &Options, state_env: bool, sort_env: bool) -> Vec<Stri
     }
     args
 }
-fn update_timestamp() -> String {
+pub(crate) fn update_timestamp() -> String {
     let seconds = unsafe { libc::time(std::ptr::null_mut()) };
+    timestamp(seconds)
+}
+pub(crate) fn timestamp(seconds: i64) -> String {
     let mut calendar: libc::tm = unsafe { std::mem::zeroed() };
     // localtime_r writes only to this initialized tm, keeping TZ handling in libc.
     if unsafe { libc::localtime_r(&seconds, &mut calendar) }.is_null() {
@@ -366,6 +378,18 @@ pub fn run(args: Vec<String>) -> Result<i32> {
         return Ok(0);
     }
     let options = parse(&args)?;
+    if options.tui && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
+        return Err(
+            "--tui requires terminal stdin and stdout; omit --tui for redirected output".into(),
+        );
+    }
+    if options.tui {
+        crate::tui::with_signals(|| run_options(options))
+    } else {
+        run_options(options)
+    }
+}
+fn run_options(options: Options) -> Result<i32> {
     if options.passthrough {
         let mut command = Command::new("squeue");
         command.args(&options.native);
@@ -404,8 +428,15 @@ pub fn run(args: Vec<String>) -> Result<i32> {
             )
         )
     };
-    let catalog = Catalog::fetch(options.steps)?;
-    let other_catalog = Catalog::fetch(!options.steps)?;
+    let fetch_catalog = |steps| {
+        if options.tui {
+            crate::tui::catalog(steps)
+        } else {
+            Catalog::fetch(steps)
+        }
+    };
+    let catalog = fetch_catalog(options.steps)?;
+    let other_catalog = fetch_catalog(!options.steps)?;
     for field in config.columns.keys() {
         if catalog.canonical(field).is_err() && other_catalog.canonical(field).is_err() {
             return Err(context(format!("columns.{field}: unknown Slurm field")));
@@ -435,8 +466,32 @@ pub fn run(args: Vec<String>) -> Result<i32> {
                 .map_err(|e| format!("--filter: {e}"))?,
         );
     }
+    if options.tui {
+        names.insert(catalog.canonical(if options.steps { "StepId" } else { "JobId" })?);
+        for field in [
+            "JobId",
+            "Cluster",
+            "TimeUsed",
+            "TimeLeft",
+            "TimeLimit",
+            "UserName",
+            "StartTime",
+            "Partition",
+            "Account",
+            "QOS",
+            "NumCPUs",
+            "NumNodes",
+            "tres-alloc",
+            "Nodes",
+            "Reason",
+            if options.steps { "StepState" } else { "State" },
+        ] {
+            if let Ok(name) = catalog.canonical(field) {
+                names.insert(name);
+            }
+        }
+    }
     let names: Vec<_> = names.into_iter().collect();
-    let format = fields::format(&names);
     let native = adaptive_args(
         &options,
         std::env::var_os("SQUEUE_STATES").is_some(),
@@ -444,6 +499,24 @@ pub fn run(args: Vec<String>) -> Result<i32> {
     );
     let tty = io::stdout().is_terminal();
     let color = options.color.enabled(tty);
+    if options.tui {
+        let query = Query {
+            native,
+            names,
+            view_filter: view_filter.cloned(),
+            filters: options.filters,
+        };
+        return crate::tui::run(crate::tui::Setup {
+            config: config.clone(),
+            view: view.to_owned(),
+            query,
+            interval: options
+                .interval
+                .unwrap_or(Duration::from_secs(config.tui.refresh_seconds)),
+            color,
+        });
+    }
+    let format = fields::format(&names);
     SIGNAL.store(0, Ordering::Relaxed);
     if options.interval.is_some() {
         unsafe {
@@ -496,6 +569,34 @@ pub fn run(args: Vec<String>) -> Result<i32> {
                 Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
             );
         }
+    }
+}
+#[derive(Clone)]
+pub(crate) struct Query {
+    pub native: Vec<String>,
+    pub names: Vec<String>,
+    pub view_filter: Option<Expression>,
+    pub filters: Vec<Expression>,
+}
+impl Query {
+    pub fn command(&self) -> Command {
+        let mut command = Command::new("squeue");
+        command
+            .args(&self.native)
+            .args(["--noheader", "--Format", &fields::format(&self.names)]);
+        command.env("SLURM_BITSTR_LEN", "1048576");
+        command
+    }
+    pub fn decode(&self, text: &str) -> Result<(Vec<fields::Row>, usize)> {
+        let mut rows = fields::decode(text, &self.names)?;
+        let fetched = rows.len();
+        rows.retain(|row| {
+            self.view_filter
+                .as_ref()
+                .is_none_or(|filter| filter.matches(row))
+                && self.filters.iter().all(|filter| filter.matches(row))
+        });
+        Ok((rows, fetched))
     }
 }
 #[cfg(test)]

@@ -83,7 +83,7 @@ fn reason(value: &str) -> &str {
         other => other,
     }
 }
-fn formatted(value: &str, name: &str, column: &Column, width: usize) -> String {
+pub(crate) fn formatted(value: &str, name: &str, column: &Column, width: usize) -> String {
     let display = column
         .entries
         .as_ref()
@@ -113,7 +113,7 @@ fn formatted(value: &str, name: &str, column: &Column, width: usize) -> String {
         _ => value.into(),
     }
 }
-fn style(theme: &Theme, row: &Row, field: &str, column: &Column) -> Style {
+pub(crate) fn style(theme: &Theme, row: &Row, field: &str, column: &Column) -> Style {
     let state = row
         .get("state")
         .or_else(|| row.get("stepstate"))

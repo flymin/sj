@@ -7,6 +7,12 @@ default_view = "queue"
 start_view = "start"
 steps_view = "steps"
 
+# --tui uses this interval unless -i is supplied. Runtime changes are not saved.
+# TUI keeps all columns referenced by the view's base/rule order lists scrollable.
+# It skips screen-driven shrinking/hiding; spare width grows columns as below.
+[tui]
+refresh_seconds = 5
+
 # Keys are exact, full squeue --helpFormat field names (case-insensitive).
 # sj q --list-fields / sj q --steps --list-fields list your Slurm's fields.
 # Widths are terminal display cells. min_width is a compression floor, so short
@@ -208,3 +214,12 @@ RUNNING = { fg = "green" }
 PENDING = { fg = "yellow" }
 FAILED = { fg = "red" }
 COMPLETED = { fg = "bright_black" }
+
+# Fullscreen-only styles; may also be overridden in a view or width rule.
+[theme.tui]
+title = { fg = "cyan", bold = true }
+selected = { fg = "white", bg = "blue", bold = true }
+border = { fg = "bright_black" }
+key = { fg = "cyan", bold = true }
+error = { fg = "red", bold = true }
+muted = { fg = "bright_black" }

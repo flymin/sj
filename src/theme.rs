@@ -10,6 +10,50 @@ pub enum Color {
 }
 
 impl Color {
+    fn terminal(&self) -> ratatui::style::Color {
+        use ratatui::style::Color as C;
+        match self {
+            Self::Index(n) => C::Indexed(*n),
+            Self::Name(name) => {
+                if name.starts_with('#')
+                    && name.len() == 7
+                    && let Ok(rgb) = u32::from_str_radix(&name[1..], 16)
+                {
+                    return C::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8);
+                }
+                let colors = [
+                    C::Black,
+                    C::Red,
+                    C::Green,
+                    C::Yellow,
+                    C::Blue,
+                    C::Magenta,
+                    C::Cyan,
+                    C::Gray,
+                ];
+                let bright = [
+                    C::DarkGray,
+                    C::LightRed,
+                    C::LightGreen,
+                    C::LightYellow,
+                    C::LightBlue,
+                    C::LightMagenta,
+                    C::LightCyan,
+                    C::White,
+                ];
+                let names = [
+                    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+                ];
+                let (name, light) = name
+                    .strip_prefix("bright_")
+                    .map_or((name.as_str(), false), |s| (s, true));
+                names
+                    .iter()
+                    .position(|s| *s == name)
+                    .map_or(C::Reset, |i| if light { bright[i] } else { colors[i] })
+            }
+        }
+    }
     fn code(&self, background: bool) -> Result<String> {
         let base = if background { 48 } else { 38 };
         match self {
@@ -56,6 +100,34 @@ pub struct Style {
 }
 
 impl Style {
+    pub fn terminal(&self, enabled: bool) -> ratatui::style::Style {
+        use ratatui::style::{Modifier, Style as S};
+        let mut style = S::default();
+        if !enabled {
+            return style;
+        }
+        if let Some(color) = &self.fg {
+            style = style.fg(color.terminal());
+        }
+        if let Some(color) = &self.bg {
+            style = style.bg(color.terminal());
+        }
+        for (value, flag) in [
+            (self.bold, Modifier::BOLD),
+            (self.dim, Modifier::DIM),
+            (self.italic, Modifier::ITALIC),
+            (self.underline, Modifier::UNDERLINED),
+        ] {
+            if let Some(value) = value {
+                style = if value {
+                    style.add_modifier(flag)
+                } else {
+                    style.remove_modifier(flag)
+                };
+            }
+        }
+        style
+    }
     pub fn overlay(&mut self, other: &Self) {
         macro_rules! copy { ($($key:ident),*) => { $(if other.$key.is_some() { self.$key = other.$key.clone(); })* }; }
         copy!(fg, bg, bold, dim, italic, underline);
@@ -109,18 +181,54 @@ pub enum StateScope {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct TuiTheme {
+    pub title: Style,
+    pub selected: Style,
+    pub border: Style,
+    pub key: Style,
+    pub error: Style,
+    pub muted: Style,
+}
+impl TuiTheme {
+    fn overlay(&mut self, other: &Self) {
+        self.title.overlay(&other.title);
+        self.selected.overlay(&other.selected);
+        self.border.overlay(&other.border);
+        self.key.overlay(&other.key);
+        self.error.overlay(&other.error);
+        self.muted.overlay(&other.muted);
+    }
+    fn validate(&self) -> Result<()> {
+        for style in [
+            &self.title,
+            &self.selected,
+            &self.border,
+            &self.key,
+            &self.error,
+            &self.muted,
+        ] {
+            style.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Theme {
     pub header: Style,
     pub row: Style,
     pub status: Style,
     pub state_scope: Option<StateScope>,
     pub states: BTreeMap<String, Style>,
+    pub tui: TuiTheme,
 }
 impl Theme {
     pub fn overlay(&mut self, other: &Self) {
         self.header.overlay(&other.header);
         self.row.overlay(&other.row);
         self.status.overlay(&other.status);
+        self.tui.overlay(&other.tui);
         if other.state_scope.is_some() {
             self.state_scope = other.state_scope;
         }
@@ -129,6 +237,7 @@ impl Theme {
         }
     }
     pub fn validate(&self) -> Result<()> {
+        self.tui.validate()?;
         for style in [&self.header, &self.row, &self.status]
             .into_iter()
             .chain(self.states.values())

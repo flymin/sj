@@ -6,6 +6,17 @@ use std::path::{Path, PathBuf};
 
 pub const TEMPLATE: &str = include_str!("../config/default.toml");
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TuiConfig {
+    pub refresh_seconds: u64,
+}
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self { refresh_seconds: 5 }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Align {
@@ -131,6 +142,8 @@ pub struct Config {
     pub columns: BTreeMap<String, Column>,
     pub views: BTreeMap<String, View>,
     pub theme: Theme,
+    #[serde(default)]
+    pub tui: TuiConfig,
 }
 pub struct Resolved {
     pub columns: Vec<(String, Column)>,
@@ -204,6 +217,13 @@ impl Config {
         Self::parse("").expect("valid built-in config")
     }
     fn validate(&self) -> Result<()> {
+        if self.tui.refresh_seconds == 0
+            || std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(self.tui.refresh_seconds))
+                .is_none()
+        {
+            return Err("tui.refresh_seconds must be positive and fit the system clock".into());
+        }
         if self.schema_version != 1 {
             return Err(format!(
                 "unsupported schema_version {}; expected 1",
@@ -288,6 +308,12 @@ impl Config {
         Ok(columns)
     }
     pub fn resolve(&self, name: &str, width: usize) -> Result<Resolved> {
+        self.resolve_mode(name, width, false)
+    }
+    pub fn resolve_tui(&self, name: &str, width: usize) -> Result<Resolved> {
+        self.resolve_mode(name, width, true)
+    }
+    fn resolve_mode(&self, name: &str, width: usize, all: bool) -> Result<Resolved> {
         let view = self
             .views
             .get(name)
@@ -303,6 +329,20 @@ impl Config {
                 }
                 patch_columns(&mut columns, &rule.columns)?;
                 theme.overlay(&rule.theme);
+            }
+        }
+        if all {
+            let mut seen: BTreeSet<_> =
+                order.iter().map(|name| name.to_ascii_lowercase()).collect();
+            for field in view.order.iter().chain(
+                view.rules
+                    .iter()
+                    .filter_map(|rule| rule.order.as_ref())
+                    .flatten(),
+            ) {
+                if seen.insert(field.to_ascii_lowercase()) {
+                    order.push(field.clone());
+                }
             }
         }
         for (field, column) in &columns {
@@ -521,6 +561,28 @@ pub fn run(args: Vec<String>) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tui_config_and_theme_inherit_without_affecting_plain_layout() {
+        for patch in [
+            "[tui]\nrefresh_seconds=0",
+            "[tui]\nrefresh_seconds=-1",
+            "[tui]\nunknown=true",
+            "[theme.tui.selected]\nfg='invalid'",
+        ] {
+            assert!(Config::parse(patch).is_err(), "{patch}");
+        }
+        let config=Config::parse("[tui]\nrefresh_seconds=2\n[theme.tui.selected]\nbg='magenta'\n[views.queue.theme.tui.selected]\nbold=false\n[[views.queue.rules]]\nmin_width=120\norder=['JobId','Name','Partition']\n[views.queue.rules.theme.tui.selected]\nfg='yellow'").unwrap();
+        assert_eq!(config.tui.refresh_seconds, 2);
+        let view = config.resolve_tui("queue", 140).unwrap();
+        assert_eq!(view.theme.tui.selected.bold, Some(false));
+        assert!(
+            matches!(view.theme.tui.selected.fg,Some(crate::theme::Color::Name(ref s)) if s=="yellow")
+        );
+        assert!(
+            matches!(view.theme.tui.selected.bg,Some(crate::theme::Color::Name(ref s)) if s=="magenta")
+        );
+        assert!(view.columns.len() > config.resolve("queue", 80).unwrap().columns.len());
+    }
     #[test]
     fn paths_follow_xdg() {
         for xdg in [None, Some(""), Some("relative")] {

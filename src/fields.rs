@@ -14,12 +14,18 @@ pub struct Catalog {
 }
 impl Catalog {
     pub fn fetch(steps: bool) -> Result<Self> {
+        Self::fetch_with(steps, util::capture)
+    }
+    pub fn fetch_with(
+        steps: bool,
+        capture: impl FnOnce(&mut Command) -> Result<String>,
+    ) -> Result<Self> {
         let mut command = Command::new("squeue");
         if steps {
             command.arg("--steps");
         }
         command.arg("--helpFormat").env("LC_ALL", "C");
-        match util::capture(&mut command) {
+        match capture(&mut command) {
             Ok(text) => Self::parse(&text, steps),
             Err(error)
                 if error.contains("unrecognized option '--helpFormat'")
