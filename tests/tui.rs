@@ -39,7 +39,15 @@ impl Session {
         fs::write(root.join("config/sj/config.toml"),"[tui]\nrefresh_seconds=1\n[views.queue]\norder=['JobId','Name','TimeLeft','tres-alloc']\nrules=[]\n[views.queue.columns.Name]\npreferred_width=20\n[views.queue.columns.tres-alloc]\npreferred_width=40\n[views.queue.columns.tres-alloc.entries]\ninclude=['cpu','mem','gres/*']\n").unwrap();
         let body = r#"
 n=0; if [ -f "$SJ_TEST_ROOT/calls" ]; then n=$(cat "$SJ_TEST_ROOT/calls"); fi
-n=$((n+1)); printf '%s' "$n" > "$SJ_TEST_ROOT/calls"
+n=$((n+1))
+# Readers must see a complete old or new value, including during manual refresh.
+: > "$SJ_TEST_ROOT/calls.next"
+if [ -f "$SJ_TEST_ROOT/hold-count" ]; then
+  : > "$SJ_TEST_ROOT/count-pending"
+  while [ -f "$SJ_TEST_ROOT/hold-count" ] && [ ! -f "$SJ_TEST_ROOT/release-count" ]; do sleep 0.01; done
+fi
+printf '%s' "$n" > "$SJ_TEST_ROOT/calls.next"
+mv "$SJ_TEST_ROOT/calls.next" "$SJ_TEST_ROOT/calls"
 mode=$(cat "$SJ_TEST_ROOT/mode")
 if [ "$mode" = slow ]; then sleep 30; fi
 if [ "$mode" = fail ]; then printf 'controller temporarily unavailable\n' >&2; exit 1; fi
@@ -341,12 +349,29 @@ fn pause_rate_changes_and_manual_refresh_do_not_edit_config() {
     session.until("PAUSED");
     session.until("Every 3s");
     let count = session.count();
+    assert!(count > 0);
     let deadline = Instant::now() + Duration::from_millis(1200);
     while Instant::now() < deadline {
         session.pump();
     }
     assert_eq!(session.count(), count);
+    fs::write(session.root.join("hold-count"), "").unwrap();
     session.send(b"r");
+    let pending = session.root.join("count-pending");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !pending.exists() && Instant::now() < deadline {
+        session.pump();
+    }
+    assert!(
+        pending.exists(),
+        "manual query did not reach the counter update"
+    );
+    assert_eq!(
+        session.count(),
+        count,
+        "incomplete update changed the count"
+    );
+    fs::write(session.root.join("release-count"), "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     while session.count() == count && Instant::now() < deadline {
         session.pump();
