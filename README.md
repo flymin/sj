@@ -7,7 +7,7 @@
 Read the queue. Open the log. Inspect the script. Step into your job.
 
 <p>
-  <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-8b5cf6?style=flat-square">
+  <img alt="Version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-8b5cf6?style=flat-square">
   <img alt="Built with Rust 1.99" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="Static binary" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 and aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -79,7 +79,7 @@ Download the archive matching your Linux architecture from [Releases](https://gi
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.3.0
+SJ_VERSION=0.3.1
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -179,20 +179,29 @@ The count compares retained rows with rows fetched after native Slurm filters. S
 
 **All columns in the selected view remain accessible.** The active width rule determines the leading column order; missing columns from the base and other rules' `order` lists are appended in configuration order, case-insensitively deduplicated. Column definitions absent from every `order` are not added. Width rules still select styles and column settings. TUI skips screen-driven shrinking, optional-column hiding, and stacked output, while keeping each column's alignment, formatting, entry selection, preferred/max widths, and overflow policy. `preferred_width` is the initial allocation: spare screen space grows columns toward their natural widths in `grow_priority` order, capped by `max_width`, as in plain output. Scroll to see remaining columns; use details for complete field values.
 
-Enter opens a centered **Overview / Raw** popup. The overview groups identity, state, timing, resources, nodes, and paths. It shows the existing snapshot immediately, then fetches controller details for that exact task. Raw includes fetched queue fields and the complete controller response, without display-only entry filters. Controller data has its own timestamp and refreshes only on opening or `r`; background queue updates continue. Text details are used when `scontrol` lacks JSON support. An unavailable controller or expired task leaves the snapshot readable. Grouped array rows ask you to use `--array` rather than selecting an arbitrary element.
+Enter opens a centered **Overview / Raw / Stdout** popup. The overview groups identity, state, timing, resources, nodes, and paths. It shows the existing snapshot immediately, then fetches controller details for that exact task. Raw includes fetched queue fields and the complete controller response, without display-only entry filters. Controller data has its own timestamp and refreshes only on opening or `r` in Overview / Raw; background queue updates continue. Text details are used when `scontrol` lacks JSON support. An unavailable controller or expired task leaves the snapshot readable. Grouped array rows ask you to use `--array` rather than selecting an arbitrary element.
+
+**Stdout loads only when you select its tab.** It resolves the sbatch output path as `sj out` does and opens at the end of the file. Like a pager, it reads file windows on demand with a bounded cache; there is no file-size or line-count limit. With wrapping off, the read window expands with the viewport’s line count so long records can fill the screen; enlarging the terminal loads more context. Scroll to load earlier or later content, and use Home / End to jump to the beginning / end. The status shows `Line current/total` alongside the percentage; current is the logical line at the top of the viewport, so wrapping does not add lines. Line counting runs in the background with a bounded sparse index; after the initial load, content is readable while `Line …/… (counting)` is shown. A streaming scan prepares a bounded ANSI parser index before the first tail view; sparse holes are skipped where supported. This preserves control sequences spanning read windows without keeping the file in memory. Counts belong to the cached snapshot and are rebuilt on `r`; leaving Stdout cancels an unfinished count. Raw and Stdout default to **no wrapping**: use Left / Right (Ctrl+Left / Ctrl+Right for a page) to inspect long lines. Press `w` to toggle wrapping; the footer shows the current mode. The toggle reuses cached content and preserves the Stdout reading position. The file must be accessible on the current host; steps use their parent allocation's sbatch stdout. Tabs keep their scroll positions, and revisiting Stdout reuses its cached snapshot. Press `r` in Stdout to reopen the log and view appended or rotated output; queue refreshes do not read the log. Switching away or closing details cancels pending stdout work. Stalled filesystem calls do not block leaving the view; a fixed limit bounds readers still waiting for the filesystem to respond. A failed reload keeps the previous snapshot readable; missing or unreadable files show a retryable error. ANSI styling is removed and carriage-return progress updates become separate lines.
+
+**Search and pager keys.** In Stdout, press `/`, enter literal text, and press Enter to search forward from the current position. Matching is case-sensitive. `n` finds the next match and `N` the previous one. Searches stop at file boundaries by default; set `[tui].search_wrap = true` to enable looping. Visible matches are highlighted, including across wrapped rows. Backspace edits the draft, Ctrl+U clears it, and Up recalls the last search. Empty Enter repeats the previous search. Esc cancels the draft or an active scan. Searches run in the background with bounded memory and do not query Slurm again. Use `g` / `G` for file start / end, `j` / `k` and `h` / `l` for movement, `f` / `b` for a full page, and `d` / `u` for a half page; Ctrl+F/B/D/U work too.
 
 | Key | Action |
 | --- | --- |
 | ↑ / ↓ | Select the previous / next task; scroll inside a popup. |
-| ← / → | Scroll horizontally by 8 cells; scroll long lines in Raw. |
+| ← / → | Scroll horizontally by 8 cells; scroll long lines in Raw / Stdout when wrapping is off. |
 | Ctrl+← / Ctrl+→ | Scroll horizontally by a page. |
 | PgUp / PgDn | Move by a page of visible rows, or scroll the popup. |
 | Home / End | First / last task, or beginning / end of details. |
 | Enter | Open the selected task's details. |
-| Tab / Shift+Tab | Switch Overview / Raw. |
+| Tab / Shift+Tab | Next / previous detail tab: Overview, Raw, Stdout. |
+| `w` | Toggle line wrapping in Raw / Stdout (default: off). |
+| `/`, `n`, `N` | Edit a literal Stdout search; next / previous match. |
+| `g` / `G` | Stdout file beginning / end. |
+| `j` / `k`, `h` / `l` | Stdout down / up, left / right. |
+| `f` / `b`, `d` / `u` | Stdout full / half page; Ctrl variants also work. |
 | Space | Pause / resume automatic queue queries. |
 | `+` / `-` | Faster / slower, in 1-second steps, minimum 1 second. |
-| `r` | Refresh the queue, or the task when its popup is open. |
+| `r` | Refresh the queue, controller details, or Stdout for the active tab. |
 | `?` / F1 | Open shortcut help. |
 | `q` / Esc | Close a popup, or quit from the queue. |
 | Ctrl+C | Quit from any screen and restore the terminal. |
@@ -200,6 +209,7 @@ Enter opens a centered **Overview / Raw** popup. The overview groups identity, s
 ```toml
 [tui]
 refresh_seconds = 5
+search_wrap = false # true: continue from the other end at file boundaries
 
 [theme.tui]
 title = { fg = "cyan", bold = true }
@@ -480,11 +490,11 @@ Tests cover configuration generation and concurrent creation, patch/rule validat
 To publish a version, update `Cargo.toml`, the `sj` entry in `Cargo.lock`, both README version badges and download examples, and add `docs/releases/<VERSION>.md`, then commit and push. Create a tag matching the package version:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
-The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.3.0-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
+The tag must exactly match `v` plus the package version. Only after both architectures pass does the workflow create a draft Release, upload both archives and `SHA256SUMS`, and publish it. Prerelease versions such as `v0.3.1-rc.1` are marked as prereleases. Already published assets are kept intact on reruns; a failed draft upload can be retried. Use Actions **Run workflow** on a branch for a build, or on a matching version tag to retry a release.
 
 Publishing uses GitHub's automatic `GITHUB_TOKEN`; no personal token is required. Build jobs have read access, while only the release job gets `contents: write`. Local toolchain setup remains available through `build.sh`; Actions uses its own pinned toolchain and `scripts/ci-build.sh`.
 

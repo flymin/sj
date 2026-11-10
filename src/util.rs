@@ -65,7 +65,20 @@ pub fn job_id(s: &str) -> Result<String> {
 }
 
 pub fn json_job(id: &str) -> Result<Value> {
-    let text = capture(Command::new("scontrol").args(["--json", "show", "job", id]))?;
+    json_job_with(id, "", &mut capture)
+}
+
+pub(crate) fn json_job_with(
+    id: &str,
+    cluster: &str,
+    capture: &mut impl FnMut(&mut Command) -> Result<String>,
+) -> Result<Value> {
+    let mut command = Command::new("scontrol");
+    command.arg("--json");
+    if !cluster.is_empty() {
+        command.args(["--clusters", cluster]);
+    }
+    let text = capture(command.args(["show", "job", id]))?;
     let value: Value =
         serde_json::from_str(&text).map_err(|e| format!("invalid scontrol JSON: {e}"))?;
     if let Some(errors) = value["errors"].as_array().filter(|e| !e.is_empty()) {

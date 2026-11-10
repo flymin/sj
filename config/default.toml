@@ -12,6 +12,8 @@ steps_view = "steps"
 # It skips screen-driven shrinking/hiding; spare width grows columns as below.
 [tui]
 refresh_seconds = 5
+# Stdout /, n and N stop at file boundaries. Set true to search cyclically.
+search_wrap = false
 
 # Keys are exact, full squeue --helpFormat field names (case-insensitive).
 # sj q --list-fields / sj q --steps --list-fields list your Slurm's fields.

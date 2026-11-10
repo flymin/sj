@@ -64,7 +64,7 @@ fn drain<T: Read>(pipe: &mut Option<T>, bytes: &mut Vec<u8>, finished: bool) -> 
     }
     Ok(())
 }
-fn cancelled(cancel: &AtomicBool) -> bool {
+pub(super) fn cancelled(cancel: &AtomicBool) -> bool {
     cancel.load(Ordering::Relaxed) || INTERRUPTED.load(Ordering::Relaxed) != 0
 }
 pub fn capture(command: &mut Command, cancel: &AtomicBool, timeout: Duration) -> Result<String> {
@@ -157,9 +157,51 @@ pub struct Task<T> {
     cancel: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     receiver: mpsc::Receiver<Result<T>>,
+    join_on_drop: bool,
+}
+const IO_WORKERS: usize = 8;
+static ACTIVE_IO: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+struct IoPermit;
+impl Drop for IoPermit {
+    fn drop(&mut self) {
+        ACTIVE_IO.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 impl<T: Send + 'static> Task<T> {
     pub fn spawn(work: impl FnOnce(&AtomicBool) -> Result<T> + Send + 'static) -> Self {
+        Self::start(work, true)
+    }
+    pub fn spawn_io(work: impl FnOnce(&AtomicBool) -> Result<T> + Send + 'static) -> Self {
+        if ACTIVE_IO
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < IO_WORKERS).then_some(active + 1)
+            })
+            .is_err()
+        {
+            let (sender, receiver) = mpsc::channel();
+            let _ = sender.send(Err(
+                "Log I/O busy; previous readers are still stopping. Retry with r.".into(),
+            ));
+            return Self {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: None,
+                receiver,
+                join_on_drop: false,
+            };
+        }
+        let permit = IoPermit;
+        Self::start(
+            move |cancel| {
+                let _permit = permit;
+                work(cancel)
+            },
+            false,
+        )
+    }
+    fn start(
+        work: impl FnOnce(&AtomicBool) -> Result<T> + Send + 'static,
+        join_on_drop: bool,
+    ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let token = cancel.clone();
         let (sender, receiver) = mpsc::channel();
@@ -170,6 +212,7 @@ impl<T: Send + 'static> Task<T> {
             cancel,
             receiver,
             handle: Some(handle),
+            join_on_drop,
         }
     }
     pub fn poll(&self) -> Option<Result<T>> {
@@ -184,7 +227,17 @@ impl<T> Drop for Task<T> {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if !self.join_on_drop {
+                // Give cancellable subprocesses time to reap. A regular-file syscall
+                // can remain blocked in the kernel; it must not hold the terminal.
+                let deadline = Instant::now() + Duration::from_millis(60);
+                while !handle.is_finished() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            if self.join_on_drop || handle.is_finished() {
+                let _ = handle.join();
+            }
         }
     }
 }
@@ -192,6 +245,51 @@ impl<T> Drop for Task<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stalled_io_does_not_block_drop_or_exceed_the_worker_limit() {
+        let mut tasks = vec![];
+        let mut releases = vec![];
+        let (finished, results) = mpsc::channel();
+        for _ in 0..IO_WORKERS {
+            let (release, gate) = mpsc::channel();
+            let (started, ready) = mpsc::channel();
+            let finished = finished.clone();
+            tasks.push(Task::spawn_io(move |cancel| {
+                started.send(()).unwrap();
+                gate.recv().unwrap(); // Simulates a syscall which cannot observe cancellation.
+                finished.send(cancel.load(Ordering::Relaxed)).unwrap();
+                Ok(())
+            }));
+            ready.recv_timeout(Duration::from_secs(2)).unwrap();
+            releases.push(release);
+        }
+        let start = Instant::now();
+        drop(tasks);
+        assert!(start.elapsed() < Duration::from_secs(1));
+        let busy = Task::spawn_io(|_| Ok(()));
+        assert!(matches!(busy.poll(), Some(Err(error)) if error.contains("I/O busy")));
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for _ in 0..IO_WORKERS {
+            assert!(results.recv_timeout(Duration::from_secs(2)).unwrap());
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while ACTIVE_IO.load(Ordering::Acquire) != 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(ACTIVE_IO.load(Ordering::Acquire), 0);
+        let task = Task::spawn_io(|_| Ok(42));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(result) = task.poll() {
+                assert_eq!(result.unwrap(), 42);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
     #[test]
     fn escaped_pipe_owners_do_not_defeat_deadlines_or_cancellation() {
         use std::os::unix::fs::DirBuilderExt;

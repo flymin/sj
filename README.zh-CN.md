@@ -7,7 +7,7 @@
 查看队列。打开日志。检查脚本。进入作业。
 
 <p>
-  <img alt="版本 0.3.0" src="https://img.shields.io/badge/version-0.3.0-8b5cf6?style=flat-square">
+  <img alt="版本 0.3.1" src="https://img.shields.io/badge/version-0.3.1-8b5cf6?style=flat-square">
   <img alt="使用 Rust 1.99 构建" src="https://img.shields.io/badge/Rust-1.99-f97316?style=flat-square&amp;logo=rust&amp;logoColor=white">
   <img alt="静态二进制" src="https://img.shields.io/badge/binary-static-14b8a6?style=flat-square">
   <img alt="Linux x86_64 和 aarch64" src="https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-6366f1?style=flat-square&amp;logo=linux&amp;logoColor=white">
@@ -79,7 +79,7 @@ Release 支持 **x86_64 和 aarch64 Linux**，采用 musl 静态二进制。使�
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
 ```bash
-SJ_VERSION=0.3.0
+SJ_VERSION=0.3.1
 SJ_TARGET="$(uname -m)-unknown-linux-musl"
 SJ_ARCHIVE="sj-v${SJ_VERSION}-${SJ_TARGET}.tar.gz"
 curl -fLO "https://github.com/flymin/sj/releases/download/v${SJ_VERSION}/${SJ_ARCHIVE}"
@@ -167,20 +167,29 @@ sj q --tui --config ./sj.toml --view monitor
 
 **当前 view 配置的全部列均可浏览。** 当前宽度规则决定优先排列，基础和其他规则 `order` 中缺少的列按配置顺序补到末尾，不区分大小写去重；所有 `order` 都未引用的列定义不会自动加入。宽度规则仍决定列属性和主题。TUI 跳过因终端宽度不足而触发的压缩、可选列隐藏和堆叠，保留每列的对齐、格式、条目筛选、preferred/max 宽度和截断方式。`preferred_width` 是起始分配宽度：与普通输出一致，有剩余屏幕空间时按 `grow_priority` 扩展到自然宽度，并遵守 `max_width`。左右滚动查看其余列，详情查看完整字段。
 
-详情弹窗分为 **Overview / Raw**：概览按身份、状态、时间、资源、节点、路径分组，先展示已有队列快照，再查询确切任务的控制器信息。Raw 展示已查询的原始队列字段及完整控制器响应，不应用仅影响展示的条目筛选。控制器详情独立显示更新时间，仅在打开或按 `r` 时查询；后台队列继续刷新。不支持 JSON 的 `scontrol` 回退为文本详情；控制器不可用或任务过期时仍可阅读快照。数组汇总行提示使用 `--array`，不任意取第一个元素。
+详情弹窗分为 **Overview / Raw / Stdout**：概览按身份、状态、时间、资源、节点、路径分组，先展示已有队列快照，再查询确切任务的控制器信息。Raw 展示已查询的原始队列字段及完整控制器响应，不应用仅影响展示的条目筛选。控制器详情独立显示更新时间，仅在打开或在 Overview / Raw 中按 `r` 时查询；后台队列继续刷新。不支持 JSON 的 `scontrol` 回退为文本详情；控制器不可用或任务过期时仍可阅读快照。数组汇总行提示使用 `--array`，不任意取第一个元素。
+
+**只有选中 Stdout 标签页时才加载日志。** 路径沿用 `sj out` 的解析方式，首次进入时定位到文件末尾，按需分页读取并使用有界缓存，不限制可浏览的文件大小或行数。关闭折行时，读取窗口会按视口行数自适应扩展，避免长记录导致屏幕只显示一行；窗口放大时补充加载。上下滚动、翻页时继续加载，Home / End 跳到文件开头／末尾。状态栏在百分比旁显示 `Line 当前行/总行数`，当前行指视口顶部的日志逻辑行，折行不会增加行数。后台统计使用有界的稀疏索引，统计完成前显示 `Line …/… (counting)`，首次加载后即可阅读日志；首次尾部视图会先流式构建有界 ANSI 解析索引，在系统支持时跳过稀疏空洞，以正确处理跨读取窗口的控制序列，无需将整份文件保存在内存中。计数跟随缓存快照，按 `r` 后重新统计，离开 Stdout 会取消未完成的统计。Raw 和 Stdout **默认不折行**，用左右键查看长行，Ctrl+左右键横向翻页；按 `w` 切换折行，底部显示当前状态。切换复用缓存，并尽量保持 Stdout 阅读位置；文件需在当前主机可读，step 显示所属 allocation 的 sbatch stdout。各标签页保留滚动位置，再次切入 Stdout 使用已有缓存；在 Stdout 中按 `r` 重新打开文件、查看追加或轮换后的输出，队列刷新不会重复加载日志。切离或关闭详情会取消尚未完成的 stdout 工作。文件系统调用卡住时仍可离开视图，等待文件系统响应的读取线程数量有固定上限。刷新失败仍保留已有快照；文件未生成或不可读时显示错误，可按 `r` 重试。显示时去掉 ANSI 样式，将回车进度更新拆为独立行。
+
+**搜索与翻页快捷键。** 在 Stdout 中按 `/` 输入字面文本，Enter 确认后从当前位置向后搜索，区分大小写。`n` 查找下一处，`N` 查找上一处，默认到文件首尾后停止；设置 `[tui].search_wrap = true` 可开启循环搜索。可见匹配会高亮，折行后也能显示。Backspace 编辑，Ctrl+U 清空，方向键上召回上次搜索；直接按 Enter 可重复上次搜索。Esc 取消编辑或正在执行的扫描。搜索在后台进行，内存有界，不会重复查询 Slurm。`g` / `G` 跳到文件首尾，`j` / `k`、`h` / `l` 移动，`f` / `b` 翻整页，`d` / `u` 翻半页；Ctrl+F/B/D/U 同样支持。
 
 | 按键 | 操作 |
 | --- | --- |
 | ↑ / ↓ | 上一个／下一个任务；弹窗内滚动。 |
-| ← / → | 横向滚动 8 个显示单元；Raw 中查看长行。 |
+| ← / → | 横向滚动 8 个显示单元；不折行时在 Raw / Stdout 中查看长行。 |
 | Ctrl+← / Ctrl+→ | 横向滚动一屏。 |
 | PgUp / PgDn | 按可见行数翻页，或滚动弹窗。 |
 | Home / End | 首个／最后一个任务，或详情起点／终点。 |
 | Enter | 打开选中任务详情。 |
-| Tab / Shift+Tab | 切换 Overview / Raw。 |
+| Tab / Shift+Tab | 下一个／上一个详情标签：Overview、Raw、Stdout。 |
+| `w` | 切换 Raw / Stdout 折行，默认关闭。 |
+| `/`、`n`、`N` | 编辑 Stdout 字面文本搜索；下一处／上一处匹配。 |
+| `g` / `G` | Stdout 文件开头／末尾。 |
+| `j` / `k`、`h` / `l` | Stdout 向下／向上、向左／向右移动。 |
+| `f` / `b`、`d` / `u` | Stdout 翻整页／半页，也支持 Ctrl 组合。 |
 | Space | 暂停／恢复自动队列查询。 |
 | `+` / `-` | 加快／减慢，步长 1 秒，最低 1 秒。 |
-| `r` | 立即刷新队列；详情弹窗中刷新该任务。 |
+| `r` | 刷新队列，或当前标签的控制器详情／Stdout。 |
 | `?` / F1 | 快捷键帮助。 |
 | `q` / Esc | 关闭弹窗；主界面中退出。 |
 | Ctrl+C | 从任何界面退出并恢复终端。 |
@@ -188,6 +197,7 @@ sj q --tui --config ./sj.toml --view monitor
 ```toml
 [tui]
 refresh_seconds = 5
+search_wrap = false # true：到文件首尾后从另一端继续搜索
 
 [theme.tui]
 title = { fg = "cyan", bold = true }
@@ -468,11 +478,11 @@ sj sh 12345 0 --container 23456        # 按 --list 给出的 PID 进入
 发布新版本时，更新 `Cargo.toml`、`Cargo.lock` 中的 `sj` 版本、双语 README 的版本徽章和下载示例，并添加 `docs/releases/<VERSION>.md` 发布说明，然后提交并推送。创建与包版本一致的 tag：
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
-tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.3.0-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
+tag 必须精确等于 `v` 加包版本。两个架构全部通过后，流程创建 draft Release，上传两个压缩包和 `SHA256SUMS`，最后正式发布。`v0.3.1-rc.1` 等预发布版本会标为 prerelease。重跑不会覆盖已正式发布的附件；draft 上传失败时可以重试。Actions 的 **Run workflow** 选择分支时仅构建，选择匹配版本的 tag 时可重试发布。
 
 发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需个人 token。构建任务只有读取权限，只有发布任务获得 `contents: write`。本地仍可通过 `build.sh` 配置和构建；Actions 使用自身固定版本的工具链与 `scripts/ci-build.sh`。
 

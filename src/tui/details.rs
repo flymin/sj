@@ -211,7 +211,7 @@ fn command(cluster: &str, id: &str, json: bool) -> Command {
     command.env("LC_ALL", "C");
     command
 }
-pub fn fetch(row: &Row, cancel: &AtomicBool) -> Result<Controller> {
+pub fn task_id(row: &Row) -> Result<(String, String)> {
     let (cluster, id) = identity(row);
     if id.contains('[') || id.contains(']') {
         return Err("Grouped array tasks: use --array to inspect an individual task".into());
@@ -224,6 +224,10 @@ pub fn fetch(row: &Row, cancel: &AtomicBool) -> Result<Controller> {
     } else {
         util::job_id(&id)?;
     }
+    Ok((cluster, id))
+}
+pub fn fetch(row: &Row, cancel: &AtomicBool) -> Result<Controller> {
+    let (cluster, id) = task_id(row)?;
     let text = process::capture(&mut command(&cluster, &id, true), cancel, TIMEOUT);
     let text = match text {
         Ok(text) => text,
@@ -274,14 +278,48 @@ pub fn fetch(row: &Row, cancel: &AtomicBool) -> Result<Controller> {
     })
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Overview,
+    Raw,
+    Stdout,
+}
+impl Tab {
+    fn index(self) -> usize {
+        match self {
+            Self::Overview => 0,
+            Self::Raw => 1,
+            Self::Stdout => 2,
+        }
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Overview => " [Overview]   Raw   Stdout",
+            Self::Raw => " Overview   [Raw]   Stdout",
+            Self::Stdout => " Overview   Raw   [Stdout]",
+        }
+    }
+}
+
 pub struct Popup {
     pub row: Row,
     pub snapshot_time: String,
     pub controller: Option<Controller>,
     pub error: Option<String>,
-    pub raw: bool,
+    pub tab: Tab,
+    pub stdout: Option<super::stdout::Snapshot>,
+    pub stdout_error: Option<String>,
+    pub stdout_lines_error: Option<String>,
+    pub stdout_loaded: bool,
+    pub stdout_wrap: bool,
+    pub raw_wrap: bool,
+    pub search_pattern: String,
+    pub search_edit: Option<String>,
+    pub search_anchor: Option<super::stdout::Anchor>,
+    pub search_message: Option<String>,
     pub x: usize,
     pub y: usize,
+    scroll: [(usize, usize); 3],
 }
 impl Popup {
     pub fn new(row: Row, snapshot_time: String) -> Self {
@@ -290,14 +328,50 @@ impl Popup {
             snapshot_time,
             controller: None,
             error: None,
-            raw: false,
+            tab: Tab::Overview,
+            stdout: None,
+            stdout_error: None,
+            stdout_lines_error: None,
+            stdout_loaded: false,
+            stdout_wrap: false,
+            raw_wrap: false,
+            search_pattern: String::new(),
+            search_edit: None,
+            search_anchor: None,
+            search_message: None,
             x: 0,
             y: 0,
+            scroll: [(0, 0); 3],
+        }
+    }
+    pub fn switch_tab(&mut self, backwards: bool) {
+        let tabs = [Tab::Overview, Tab::Raw, Tab::Stdout];
+        let index = self.tab.index();
+        self.scroll[index] = (self.x, self.y);
+        self.tab = tabs[(index + if backwards { 2 } else { 1 }) % tabs.len()];
+        (self.x, self.y) = self.scroll[self.tab.index()];
+    }
+    pub fn wrapped(&self) -> bool {
+        match self.tab {
+            Tab::Overview => true,
+            Tab::Raw => self.raw_wrap,
+            Tab::Stdout => self.stdout_wrap,
         }
     }
     pub fn lines(&self) -> Vec<String> {
+        if self.tab == Tab::Stdout {
+            return if let Some(error) = &self.stdout_error {
+                vec![
+                    "Cannot load stdout".into(),
+                    error.clone(),
+                    "Press r to retry".into(),
+                ]
+            } else {
+                vec![]
+            };
+        }
         let mut lines = Vec::new();
-        if self.raw {
+        if self.tab == Tab::Raw {
             lines.push("QUEUE FIELDS · complete raw values".into());
             lines.extend(
                 serde_json::to_string_pretty(&self.row)
@@ -443,7 +517,7 @@ mod tests {
                 .any(|line| line.starts_with("CPUs") && line.ends_with('8'))
         );
         assert!(lines.contains(&crate::queue::timestamp(1900000000)));
-        popup.raw = true;
+        popup.tab = Tab::Raw;
         assert!(popup.lines().join("\n").contains(&raw));
     }
     #[test]
@@ -506,7 +580,7 @@ mod tests {
         );
         assert!(popup.lines().join("\n").contains("billing=8"));
         let mut popup = popup;
-        popup.raw = true;
+        popup.tab = Tab::Raw;
         assert!(popup.lines().join("\n").contains("billing=8"));
     }
     #[test]

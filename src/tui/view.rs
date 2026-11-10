@@ -134,6 +134,66 @@ fn crop(value: &str, start: usize, width: usize) -> String {
     out.push_str(&" ".repeat(width.saturating_sub(used)));
     out
 }
+fn highlighted(
+    value: &str,
+    start: usize,
+    width: usize,
+    marks: &[(usize, usize)],
+    plain: Style,
+    hit: Style,
+) -> Line<'static> {
+    let end = start.saturating_add(width);
+    let mut spans = vec![];
+    let mut buffer = String::new();
+    let mut marked = false;
+    let mut position: usize = 0;
+    let mut used = 0;
+    let mut mark = 0;
+    {
+        let mut append = |text: &str, selected: bool| {
+            if marked != selected && !buffer.is_empty() {
+                spans.push(Span::styled(
+                    std::mem::take(&mut buffer),
+                    if marked { hit } else { plain },
+                ));
+            }
+            marked = selected;
+            buffer.push_str(text);
+        };
+        for (offset, glyph) in value.grapheme_indices(true) {
+            while mark < marks.len() && marks[mark].1 <= offset {
+                mark += 1;
+            }
+            let selected = mark < marks.len() && marks[mark].0 < offset + glyph.len();
+            let size = UnicodeWidthStr::width(glyph);
+            if size == 0 {
+                if used > 0 && position <= end {
+                    append(glyph, selected);
+                }
+                continue;
+            }
+            if position >= end {
+                break;
+            }
+            let next = position.saturating_add(size);
+            if next > start {
+                let take = next.min(end) - position.max(start);
+                if position >= start && next <= end {
+                    append(glyph, selected);
+                } else {
+                    append(&" ".repeat(take), false);
+                }
+                used += take;
+            }
+            position = next;
+        }
+        append(&" ".repeat(width.saturating_sub(used)), false);
+    }
+    if !buffer.is_empty() {
+        spans.push(Span::styled(buffer, if marked { hit } else { plain }));
+    }
+    Line::from(spans)
+}
 fn cell_piece(value: &str, total: usize, align: Align, skip: usize, width: usize) -> String {
     let value_width = UnicodeWidthStr::width(value);
     let padding = if matches!(align, Align::Right) {
@@ -475,6 +535,9 @@ fn popup_area(width: usize, height: usize) -> Rect {
 pub fn popup_capacity(width: usize, height: usize) -> usize {
     usize::from(popup_area(width, height).height.saturating_sub(6)).max(1)
 }
+pub fn popup_text_width(width: usize, height: usize) -> usize {
+    usize::from(popup_area(width, height).width.saturating_sub(2)).max(1)
+}
 fn wrapped(lines: &[String], width: usize) -> Vec<String> {
     let mut result = Vec::new();
     let width = width.max(1);
@@ -524,14 +587,61 @@ fn draw_popup(frame: &mut Frame, app: &mut App) {
     line(
         frame,
         inner,
-        if popup.raw {
-            " Overview   [Raw]"
-        } else {
-            " [Overview]   Raw"
-        },
+        popup.tab.title(),
         theme.tui.title.terminal(color),
     );
-    let status = if app.detail_task.is_some() {
+    let stdout = popup.tab == super::details::Tab::Stdout;
+    let paged_stdout = stdout && popup.stdout.is_some();
+    let capacity = usize::from(inner.height - 4);
+    let stdout_rows = popup.stdout.as_ref().filter(|_| stdout).map(|snapshot| {
+        snapshot.visible_rows(
+            usize::from(inner.width),
+            popup.stdout_wrap,
+            Some(&popup.search_pattern),
+            popup.y,
+            capacity,
+            popup.x,
+        )
+    });
+    let progress = popup
+        .stdout
+        .as_ref()
+        .zip(stdout_rows.as_ref())
+        .map(|(snapshot, rows)| {
+            snapshot.progress(
+                rows,
+                popup.y.min(rows.len().saturating_sub(capacity)),
+                capacity,
+            )
+        });
+    let line_position = popup
+        .stdout
+        .as_ref()
+        .zip(stdout_rows.as_ref())
+        .and_then(|(snapshot, rows)| {
+            snapshot.line_position(rows, popup.y.min(rows.len().saturating_sub(capacity)))
+        })
+        .map(|(current, total)| format!("Line {current}/{total}"))
+        .unwrap_or_else(|| {
+            if popup.stdout_lines_error.is_some() {
+                "Line ?/?".into()
+            } else {
+                "Line …/… (counting)".into()
+            }
+        });
+    let status = if stdout {
+        if app.stdout_task.is_some() {
+            "Loading stdout…".into()
+        } else if let Some(snapshot) = &popup.stdout {
+            format!(
+                "{line_position} · {}% · Stdout: {}",
+                progress.unwrap_or(0),
+                snapshot.updated
+            )
+        } else {
+            "Stdout · press r to retry".into()
+        }
+    } else if app.detail_task.is_some() {
         "Loading controller details…".into()
     } else if let Some(controller) = &popup.controller {
         format!("Controller: {}", controller.updated)
@@ -547,11 +657,41 @@ fn draw_popup(frame: &mut Frame, app: &mut App) {
         status,
         theme.tui.muted.terminal(color),
     );
-    let notice = popup.error.as_deref().unwrap_or(if !present {
-        "Task is not in the latest queue snapshot"
+    let error = if stdout {
+        popup
+            .stdout_error
+            .as_deref()
+            .or(popup.stdout_lines_error.as_deref())
     } else {
-        ""
-    });
+        popup.error.as_deref()
+    };
+    let notice = if stdout && popup.search_edit.is_some() {
+        let draft = popup.search_edit.as_deref().unwrap_or("");
+        let available = usize::from(inner.width).saturating_sub(27).max(1);
+        let size = UnicodeWidthStr::width(draft);
+        let draft = if size > available {
+            crop(draft, size - available, available)
+        } else {
+            draft.to_owned()
+        };
+        format!("/{}▌  Enter Search · Esc Cancel", draft)
+    } else if stdout && app.search_task.is_some() {
+        format!("Searching /{}/ · Esc Cancel", popup.search_pattern)
+    } else if stdout && popup.search_message.is_some() {
+        popup.search_message.clone().unwrap_or_default()
+    } else if let Some(error) = error {
+        error.to_owned()
+    } else if stdout {
+        popup
+            .stdout
+            .as_ref()
+            .map(|snapshot| snapshot.path.display().to_string())
+            .unwrap_or_default()
+    } else if !present {
+        "Task is not in the latest queue snapshot".into()
+    } else {
+        String::new()
+    };
     line(
         frame,
         Rect {
@@ -559,18 +699,32 @@ fn draw_popup(frame: &mut Frame, app: &mut App) {
             ..inner
         },
         notice,
-        if popup.error.is_some() {
+        if error.is_some() {
             theme.tui.error.terminal(color)
         } else {
             theme.tui.muted.terminal(color)
         },
     );
-    let capacity = usize::from(inner.height - 4);
-    let lines = popup.lines();
-    let lines = if popup.raw {
-        lines
+    let mut marks = vec![];
+    let lines = if let Some(rows) = stdout_rows {
+        if rows.is_empty() {
+            vec!["Stdout is empty".into()]
+        } else {
+            rows.into_iter()
+                .map(|row| {
+                    marks.push(row.marks);
+                    row.text
+                })
+                .collect()
+        }
     } else {
+        popup.lines()
+    };
+    let overview = popup.tab == super::details::Tab::Overview;
+    let lines = if !paged_stdout && popup.wrapped() {
         wrapped(&lines, usize::from(inner.width))
+    } else {
+        lines
     };
     popup.y = popup.y.min(lines.len().saturating_sub(capacity));
     let max_width = lines
@@ -578,7 +732,7 @@ fn draw_popup(frame: &mut Frame, app: &mut App) {
         .map(|line| UnicodeWidthStr::width(line.as_str()))
         .max()
         .unwrap_or(0);
-    popup.x = if popup.raw {
+    popup.x = if !popup.wrapped() {
         popup
             .x
             .min(max_width.saturating_sub(usize::from(inner.width)))
@@ -586,26 +740,58 @@ fn draw_popup(frame: &mut Frame, app: &mut App) {
         0
     };
     for (i, text) in lines.iter().skip(popup.y).take(capacity).enumerate() {
-        let style = if !popup.raw && !text.is_empty() && text.chars().all(|c| !c.is_lowercase()) {
+        let style = if overview && !text.is_empty() && text.chars().all(|c| !c.is_lowercase()) {
             theme.tui.title.terminal(color)
         } else {
             theme.row.terminal(color)
         };
-        line(
-            frame,
-            Rect::new(inner.x, inner.y + 3 + i as u16, inner.width, 1),
-            crop(&util::clean(text), popup.x, usize::from(inner.width)),
-            style,
-        );
+        let area = Rect::new(inner.x, inner.y + 3 + i as u16, inner.width, 1);
+        if let Some(marks) = marks.get(popup.y + i).filter(|marks| !marks.is_empty()) {
+            frame.render_widget(
+                highlighted(
+                    text,
+                    popup.x,
+                    usize::from(inner.width),
+                    marks,
+                    style,
+                    theme.tui.selected.terminal(color),
+                ),
+                area,
+            );
+        } else {
+            line(
+                frame,
+                area,
+                crop(&util::clean(text), popup.x, usize::from(inner.width)),
+                style,
+            );
+        }
     }
     line(
         frame,
         Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
-        format!(
-            "Tab Switch · ↑↓/Pg Scroll · r Refresh · Esc Back  {}/{}",
-            popup.y + 1,
-            lines.len().max(1)
-        ),
+        if stdout {
+            format!(
+                "/ Search · n/N · g/G · w Wrap:{} · r Refresh · Esc Back {}%",
+                if popup.stdout_wrap { "on" } else { "off" },
+                progress.unwrap_or(0)
+            )
+        } else {
+            format!(
+                "Tab Switch · {}↑↓/Pg Scroll · r Refresh · Esc Back  {}/{}",
+                if popup.tab == super::details::Tab::Raw {
+                    if popup.raw_wrap {
+                        "w Wrap:on · "
+                    } else {
+                        "w Wrap:off · "
+                    }
+                } else {
+                    ""
+                },
+                popup.y + 1,
+                lines.len().max(1)
+            )
+        },
         theme.tui.key.terminal(color),
     );
 }
@@ -641,9 +827,16 @@ fn draw_help(frame: &mut Frame, app: &mut App) {
         "r              Refresh queue; in details, refresh task",
         "",
         "DETAILS",
-        "Tab            Switch Overview / Raw",
+        "Tab / Shift+Tab  Next / previous detail tab",
+        "Stdout         Loads on first visit; r reloads the tail",
+        "/              Enter Stdout search; Enter confirms, Esc cancels",
+        "n / N          Next / previous Stdout match",
+        "g / G          Stdout beginning / end",
+        "j k h l        Stdout down/up/left/right",
+        "f/b · d/u      Full / half page (Ctrl also works)",
         "↑↓ / PgUp/Dn   Scroll details",
-        "← / →          Scroll long Raw lines",
+        "← / →          Scroll long Raw / Stdout lines",
+        "w              Toggle Raw / Stdout wrapping (default off)",
         "Home / End     Beginning / end of details",
         "",
         "EXIT",
@@ -684,6 +877,29 @@ mod tests {
         tui::{App, Setup},
     };
     use std::time::Duration;
+    #[test]
+    fn search_highlights_preserve_unicode_clipping_and_terminal_width() {
+        let value = "ab训练cd";
+        let plain = Style::default();
+        let hit = Style::default().fg(ratatui::style::Color::Yellow);
+        for start in 0..8 {
+            for width in 0..9 {
+                let marked = highlighted(value, start, width, &[(2, 8)], plain, hit);
+                let text = marked
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                assert_eq!(text, crop(value, start, width));
+            }
+        }
+        assert!(
+            highlighted(value, 0, 8, &[(2, 8)], plain, hit)
+                .spans
+                .iter()
+                .any(|span| span.style == hit)
+        );
+    }
     fn app() -> App {
         App::new(Setup {
             config: Config::builtin(),

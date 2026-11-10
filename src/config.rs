@@ -10,10 +10,14 @@ pub const TEMPLATE: &str = include_str!("../config/default.toml");
 #[serde(default, deny_unknown_fields)]
 pub struct TuiConfig {
     pub refresh_seconds: u64,
+    pub search_wrap: bool,
 }
 impl Default for TuiConfig {
     fn default() -> Self {
-        Self { refresh_seconds: 5 }
+        Self {
+            refresh_seconds: 5,
+            search_wrap: false,
+        }
     }
 }
 
@@ -561,6 +565,22 @@ pub fn run(args: Vec<String>) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stdout_search_wrap_is_opt_in_and_requires_a_boolean() {
+        assert!(!TuiConfig::default().search_wrap);
+        for patch in ["", "[tui]\nrefresh_seconds=2", "[tui]\nsearch_wrap=false"] {
+            assert!(!Config::parse(patch).unwrap().tui.search_wrap);
+        }
+        assert!(
+            Config::parse("[tui]\nsearch_wrap=true")
+                .unwrap()
+                .tui
+                .search_wrap
+        );
+        for value in ["'true'", "1"] {
+            assert!(Config::parse(&format!("[tui]\nsearch_wrap={value}")).is_err());
+        }
+    }
     #[test]
     fn tui_config_and_theme_inherit_without_affecting_plain_layout() {
         for patch in [

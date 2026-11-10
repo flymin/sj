@@ -3,7 +3,10 @@ use std::{
     io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd},
-        unix::{fs::PermissionsExt, process::CommandExt},
+        unix::{
+            fs::{FileExt, PermissionsExt},
+            process::CommandExt,
+        },
     },
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -25,6 +28,9 @@ struct Session {
 }
 impl Session {
     fn open(mode: &str, steps: bool) -> Self {
+        Self::with_tui(mode, steps, "")
+    }
+    fn with_tui(mode: &str, steps: bool, extra: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
             "sj-tui-test-{}-{}",
             std::process::id(),
@@ -36,7 +42,7 @@ impl Session {
         if mode == "catalog" {
             fs::write(root.join("slow-catalog"), "").unwrap();
         }
-        fs::write(root.join("config/sj/config.toml"),"[tui]\nrefresh_seconds=1\n[views.queue]\norder=['JobId','Name','TimeLeft','tres-alloc']\nrules=[]\n[views.queue.columns.Name]\npreferred_width=20\n[views.queue.columns.tres-alloc]\npreferred_width=40\n[views.queue.columns.tres-alloc.entries]\ninclude=['cpu','mem','gres/*']\n").unwrap();
+        fs::write(root.join("config/sj/config.toml"),format!("[tui]\nrefresh_seconds=1\n{extra}\n[views.queue]\norder=['JobId','Name','TimeLeft','tres-alloc']\nrules=[]\n[views.queue.columns.Name]\npreferred_width=20\n[views.queue.columns.tres-alloc]\npreferred_width=40\n[views.queue.columns.tres-alloc.entries]\ninclude=['cpu','mem','gres/*']\n")).unwrap();
         let body = r#"
 n=0; if [ -f "$SJ_TEST_ROOT/calls" ]; then n=$(cat "$SJ_TEST_ROOT/calls"); fi
 n=$((n+1))
@@ -72,7 +78,32 @@ if [ "$1" != '--json' ]; then printf 'JobId=%s LegacyDetail=available\n' "$id"; 
 case " $* " in *' show step '*) records=steps;; *) records=jobs;; esac
 printf '{"%s":[{"job_id":"%s","name":"controller-detail-%s","tres_alloc_str":"cpu=8,billing=8","standard_output":"/work/job.out"}]}\n' "$records" "$id" "$id"
 "#;
-        for (name, body) in [("squeue", queue), ("scontrol", controller.into())] {
+        let accounting = r#"
+printf '%s\n' "$*" >> "$SJ_TEST_ROOT/stdout-calls"
+if [ -f "$SJ_TEST_ROOT/slow-stdout" ]; then
+  printf '%s' "$$" > "$SJ_TEST_ROOT/stdout-pid.next"
+  mv "$SJ_TEST_ROOT/stdout-pid.next" "$SJ_TEST_ROOT/stdout-pid"
+  exec sleep 30
+fi
+id=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = '--jobs' ]; then shift; id=$1; fi
+  shift
+done
+printf '%s\037%s\037%s/out-%s.log\037\037%s\n' "$id" "$id" "$SJ_TEST_ROOT" "$id" "$SJ_TEST_ROOT"
+"#;
+        for id in ["42", "43"] {
+            fs::write(
+                root.join(format!("out-{id}.log")),
+                format!("first-{id}\nlast-{id}\n"),
+            )
+            .unwrap();
+        }
+        for (name, body) in [
+            ("squeue", queue),
+            ("scontrol", controller.into()),
+            ("sacct", accounting.into()),
+        ] {
             let path = root.join("bin").join(name);
             fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -185,6 +216,16 @@ printf '{"%s":[{"job_id":"%s","name":"controller-detail-%s","tres_alloc_str":"cp
     }
     fn send(&mut self, bytes: &[u8]) {
         self.master.write_all(bytes).unwrap();
+    }
+    fn absent(&mut self, text: &str) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while self.screen().contains(text) && Instant::now() < deadline {
+            self.pump();
+        }
+        assert!(
+            !self.screen().contains(text),
+            "text remained visible: {text}"
+        );
     }
     fn count(&self) -> usize {
         fs::read_to_string(self.root.join("calls"))
@@ -301,13 +342,13 @@ fn screen(bytes: &[u8], width: usize, height: usize) -> String {
             }
             if y < height && x < width {
                 grid[y][x] = c;
-                grid[y][x + 1..(x + size).min(width)].fill(' ');
+                grid[y][x + 1..(x + size).min(width)].fill('\0');
             }
             x = x.saturating_add(size);
         }
     }
     grid.iter()
-        .map(|row| row.iter().collect::<String>())
+        .map(|row| row.iter().filter(|&&ch| ch != '\0').collect::<String>())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -505,4 +546,518 @@ fn interrupted_startup_catalogs_reap_children_before_the_screen_opens() {
         assert_eq!(actual.c_iflag, session.original.c_iflag);
         assert_eq!(actual.c_lflag, session.original.c_lflag);
     }
+}
+
+#[test]
+fn stdout_is_lazy_cached_and_refreshed_only_on_request() {
+    let mut session = Session::open("ok", false);
+    session.until("LIVE");
+    session.send(b"\r");
+    session.until("Controller:");
+    let calls = session.root.join("stdout-calls");
+    assert!(!calls.exists());
+    session.send(b"\t");
+    session.until("QUEUE FIELDS");
+    assert!(!calls.exists());
+    session.send(b"\t");
+    session.until("Stdout:");
+    session.until("last-42");
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    fs::write(session.root.join("out-42.log"), "UPDATED-STDOUT\n").unwrap();
+    session.send(b"\t");
+    session.until("[Overview]");
+    session.send(b"\t\t");
+    session.until("[Stdout]");
+    assert!(session.screen().contains("last-42"));
+    assert!(!session.screen().contains("UPDATED-STDOUT"));
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    session.send(b"r");
+    session.until("UPDATED-STDOUT");
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 2);
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_tab_cancels_slow_loads_and_keeps_tasks_separate() {
+    let mut session = Session::open("ok", false);
+    session.until("LIVE");
+    fs::write(session.root.join("slow-stdout"), "").unwrap();
+    session.send(b"\r\x1b[Z");
+    session.until("Loading stdout");
+    let pidfile = session.root.join("stdout-pid");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !pidfile.exists() && Instant::now() < deadline {
+        session.pump();
+    }
+    let pid: i32 = fs::read_to_string(&pidfile).unwrap().parse().unwrap();
+    let start = Instant::now();
+    session.send(b"\t");
+    session.until("[Overview]");
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    fs::remove_file(session.root.join("slow-stdout")).unwrap();
+    session.send(b"\x1b[Z");
+    session.until("last-42");
+    session.send(b"q\x1b[B\r\x1b[Z");
+    session.until("last-43");
+    assert!(!session.screen().contains("last-42"));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_errors_can_retry_and_empty_logs_stay_readable() {
+    let mut session = Session::open("ok", false);
+    let path = session.root.join("out-42.log");
+    fs::remove_file(&path).unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("Cannot load stdout");
+    let calls = session.root.join("stdout-calls");
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    session.send(b"\t");
+    session.until("[Overview]");
+    session.send(b"\x1b[Z");
+    session.until("Cannot load stdout");
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    fs::write(&path, "").unwrap();
+    session.send(b"r");
+    session.until("Stdout is empty");
+    fs::write(&path, "RECOVERED\n").unwrap();
+    session.send(b"r");
+    session.until("RECOVERED");
+    fs::remove_file(path).unwrap();
+    session.send(b"r");
+    session.until("cannot open");
+    assert!(session.screen().contains("RECOVERED"));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_for_steps_uses_the_parent_allocation() {
+    let mut session = Session::open("ok", true);
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("Task 42.0");
+    session.until("last-42");
+    let calls = fs::read_to_string(session.root.join("stdout-calls")).unwrap();
+    assert!(calls.contains("--jobs 42 "));
+    assert!(!calls.contains("--jobs 42.0"));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_opens_at_the_tail_and_keeps_its_scroll_position() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        (0..10000)
+            .map(|i| format!("log-line-{i:04}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("log-line-9999");
+    session.send(b"\x1b[H");
+    session.until("log-line-0000");
+    session.until("Line 1/10000");
+    session.send(b"j");
+    session.until("Line 2/10000");
+    session.send(b"g");
+    session.until("Line 1/10000");
+    assert!(!session.screen().contains("log-line-9999"));
+    session.send(b"\t");
+    session.until("[Overview]");
+    session.send(b"\x1b[Z");
+    session.until("log-line-0000");
+    session.until("Line 1/10000");
+    assert!(!session.screen().contains("log-line-9999"));
+    session.send(b"\x1b[F");
+    session.until("log-line-9999");
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_long_records_fill_the_screen_and_resize_without_losing_paging_or_panning() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        (0..120)
+            .map(|i| format!("record-{i:03} {} END-{i:03}\n", "x".repeat(45900)))
+            .collect::<String>(),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("record-119");
+    session.until("Line 107/120");
+    for i in 106..120 {
+        assert!(session.screen().contains(&format!("record-{i:03}")));
+    }
+    session.send(b"\x1b[5~");
+    session.until("Line 93/120");
+    session.send(b"\x1b[6~");
+    session.until("Line 107/120");
+    session.resize(100, 50);
+    session.until("Line 91/120");
+    for i in 90..120 {
+        assert!(session.screen().contains(&format!("record-{i:03}")));
+    }
+    session.send(b"g");
+    session.until("Line 1/120");
+    session.send(b"j");
+    session.until("Line 2/120");
+    session.send(b"k");
+    session.until("Line 1/120");
+    session.send(b"/END-000\r");
+    session.until("Match found");
+    session.until("END-000");
+    session.send(b"g");
+    session.until("record-000");
+    session.send(b"w");
+    session.until("Wrap:on");
+    session.send(b"w");
+    session.until("Wrap:off");
+    session.until("record-029");
+    session.until("Line 1/120");
+    session.send(b"/x\r");
+    session.until("Match found");
+    let started = Instant::now();
+    session.send(b"j");
+    session.until("Line 2/120");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_line_positions_follow_wrapping_search_and_reload() {
+    let mut session = Session::open("ok", false);
+    let path = session.root.join("out-42.log");
+    fs::write(
+        &path,
+        (0..100)
+            .map(|i| format!("record-{i:03} {}\n", "x".repeat(300)))
+            .collect::<String>(),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("record-099");
+    session.until("/100 · 100%");
+    session.send(b"g");
+    session.until("Line 1/100");
+    session.send(b"j");
+    session.until("Line 2/100");
+    session.send(b"w");
+    session.until("Wrap:on");
+    session.until("Line 2/100");
+    session.send(b"j");
+    session.absent("record-001");
+    assert!(session.screen().contains("Line 2/100"));
+    session.send(b"/record-050\r");
+    session.until("Match found");
+    session.until("Line 51/100");
+    fs::write(&path, "fresh\nlast").unwrap();
+    session.send(b"r");
+    session.until("Line 1/2");
+    session.until("last");
+    fs::write(&path, "").unwrap();
+    session.send(b"r");
+    session.until("Line 0/0 · 100%");
+    session.until("Stdout is empty");
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_load_is_cancelled_on_interrupt_and_terminal_is_restored() {
+    let mut session = Session::open("ok", false);
+    fs::write(session.root.join("slow-stdout"), "").unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("Loading stdout");
+    let pidfile = session.root.join("stdout-pid");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !pidfile.exists() && Instant::now() < deadline {
+        session.pump();
+    }
+    let pid: i32 = fs::read_to_string(pidfile).unwrap().parse().unwrap();
+    let start = Instant::now();
+    session.send(&[3]);
+    session.finish(130);
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+}
+
+#[test]
+fn stdout_defaults_to_no_wrap_and_w_toggles_without_reloading() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        format!("LEFT-MARKER {} RIGHT-EDGE\n", "x".repeat(160)),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r");
+    session.until("Controller:");
+    session.send(b"\t");
+    session.until("QUEUE FIELDS");
+    session.until("Wrap:off");
+    session.send(b"w");
+    session.until("Wrap:on");
+    session.send(b"\t");
+    session.until("LEFT-MARKER");
+    session.until("Wrap:off");
+    assert!(!session.screen().contains("RIGHT-EDGE"));
+    session.send(b"\x1b[1;5C\x1b[1;5C");
+    session.until("RIGHT-EDGE");
+    session.send(b"\x1b[1;5D\x1b[1;5D");
+    session.until("LEFT-MARKER");
+    session.send(b"w");
+    session.until("Wrap:on");
+    session.until("RIGHT-EDGE");
+    session.send(b"\t");
+    session.until("[Overview]");
+    session.send(b"\x1b[Z");
+    session.until("Wrap:on");
+    session.send(b"w");
+    session.until("Wrap:off");
+    assert!(!session.screen().contains("RIGHT-EDGE"));
+    assert_eq!(
+        fs::read_to_string(session.root.join("stdout-calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn unwrapped_stdout_can_pan_into_an_earlier_cache_window() {
+    let mut session = Session::open("ok", false);
+    let mut text = vec![b'x'; 7 * 8192 + 100];
+    text[5 * 8192 - 8..5 * 8192].copy_from_slice(b"PREVIOUS");
+    text[5 * 8192..5 * 8192 + 7].copy_from_slice(b"CURRENT");
+    fs::write(session.root.join("out-42.log"), text).unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("CURRENT");
+    session.send(b"\x1b[D");
+    session.until("PREVIOUSCURRENT");
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_searches_all_history_repeats_backwards_and_supports_start_end_aliases() {
+    let mut session = Session::with_tui("ok", false, "search_wrap=true");
+    fs::write(
+        session.root.join("out-42.log"),
+        (0..10000)
+            .map(|i| {
+                if i == 100 {
+                    "NEEDLE-FIRST\n".into()
+                } else if i == 9000 {
+                    "NEEDLE-SECOND\n".into()
+                } else {
+                    format!("row-{i:05}\n")
+                }
+            })
+            .collect::<String>(),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("row-09999");
+    session.send(b"/NEEDLE");
+    session.until("/NEEDLE▌");
+    assert!(session.screen().contains("row-09999"));
+    session.send(b"\r");
+    session.until("NEEDLE-FIRST");
+    session.until("Search wrapped");
+    session.send(b"n");
+    session.until("NEEDLE-SECOND");
+    session.send(b"N");
+    session.until("NEEDLE-FIRST");
+    session.send(b"N");
+    session.until("NEEDLE-SECOND");
+    session.send(b"g");
+    session.until("row-00000");
+    for (down, up) in [
+        (b"j".as_slice(), b"k".as_slice()),
+        (b"f".as_slice(), b"b".as_slice()),
+        (b"d".as_slice(), b"u".as_slice()),
+        (b"\x06".as_slice(), b"\x02".as_slice()),
+        (b"\x04".as_slice(), b"\x15".as_slice()),
+    ] {
+        session.send(down);
+        session.absent("row-00000");
+        session.send(up);
+        session.until("row-00000");
+    }
+    session.send(b"G");
+    session.until("row-09999");
+    assert_eq!(
+        fs::read_to_string(session.root.join("stdout-calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_search_stops_at_both_boundaries_by_default_and_preserves_the_position() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        format!("TARGET-FIRST\n{}TARGET-LAST\n", "filler\n".repeat(10000)),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("TARGET-LAST");
+    session.send(b"/TARGET-FIRST\r");
+    session.until("Text not found");
+    assert!(session.screen().contains("TARGET-LAST"));
+    session.send(b"g");
+    session.until("TARGET-FIRST");
+    session.send(b"/TARGET\r");
+    session.until("Match found");
+    session.send(b"n");
+    session.until("TARGET-LAST");
+    session.send(b"n");
+    session.until("Text not found");
+    assert!(session.screen().contains("TARGET-LAST"));
+    session.send(b"N");
+    session.until("TARGET-FIRST");
+    session.send(b"N");
+    session.until("Text not found");
+    assert!(session.screen().contains("TARGET-FIRST"));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_search_past_a_short_rows_end_does_not_find_hidden_text_behind_the_cursor() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        format!(
+            "shortZ\n{}",
+            (0..100)
+                .map(|_| format!("{}\n", "x".repeat(300)))
+                .collect::<String>()
+        ),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("Stdout:");
+    session.send(b"g");
+    session.until("shortZ");
+    session.send(b"l");
+    session.absent("shortZ");
+    session.send(b"/Z\r");
+    session.until("Text not found");
+    assert!(!session.screen().contains("shortZ"));
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_search_prompt_can_edit_cancel_and_repeat_without_losing_the_log() {
+    let mut session = Session::open("ok", false);
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("last-42");
+    session.send(b"/qGwr");
+    session.until("/qGwr▌");
+    session.send(b"\x1b");
+    session.absent("/qGwr▌");
+    assert!(session.screen().contains("last-42"));
+    session.send(b"/missing\r");
+    session.until("Text not found");
+    assert!(session.screen().contains("last-42"));
+    session.send(b"/ignored\x15last\r");
+    session.until("Match found");
+    session.send(b"/\r");
+    session.until("Text not found");
+    assert_eq!(
+        fs::read_to_string(session.root.join("stdout-calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_search_reveals_offscreen_unicode_matches_in_both_wrap_modes() {
+    let mut session = Session::open("ok", false);
+    fs::write(
+        session.root.join("out-42.log"),
+        format!("START {} 训练-END\n", "x".repeat(300)),
+    )
+    .unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("START");
+    assert!(!session.screen().contains("训练-END"));
+    session.send("/训练\r".as_bytes());
+    session.until("Match found");
+    session.until("训练-END");
+    session.send(b"w");
+    session.until("Wrap:on");
+    session.until("训练-END");
+    session.send(b"n");
+    session.until("Text not found");
+    assert!(session.screen().contains("训练-END"));
+    session.send(b"wg");
+    session.until("START");
+    session.send(b"l");
+    session.absent("START");
+    session.send(b"h");
+    session.until("START");
+    session.send(b"qq");
+    session.finish(0);
+}
+
+#[test]
+fn stdout_search_can_cancel_a_large_scan_without_closing_details() {
+    let mut session = Session::open("ok", false);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(session.root.join("out-42.log"))
+        .unwrap();
+    let size = 3 * 1024 * 1024 * 1024u64;
+    file.set_len(size).unwrap();
+    file.write_all_at(b"\nLATEST\n", size - 8).unwrap();
+    session.until("LIVE");
+    session.send(b"\r\x1b[Z");
+    session.until("LATEST");
+    session.send(b"g");
+    session.until("first-42");
+    session.send(b"/not-in-this-log\r");
+    session.until("Searching /");
+    let start = Instant::now();
+    session.send(b"\x1b");
+    session.until("Search cancelled");
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(session.screen().contains("Task 42"));
+    assert!(session.screen().contains("first-42"));
+    session.send(b"qq");
+    session.finish(0);
 }
